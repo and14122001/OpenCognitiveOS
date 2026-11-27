@@ -94,6 +94,20 @@ class TestStorageAndIdempotency(unittest.TestCase):
         created_count = sum(1 for _, c in results if c)
         self.assertEqual(created_count, 1)
 
+    def test_invalid_restore_preserves_destination(self) -> None:
+        from opencognitiveos.errors import DatabaseIntegrityError
+
+        root = Path(self.tmpdir.name)
+        target = root / "existing"
+        target.write_bytes(b"untouched")
+        with self.assertRaises(FileNotFoundError):
+            SQLiteStore.restore_from(root / "missing", target)
+        empty = root / "empty"
+        empty.touch()
+        with self.assertRaises(DatabaseIntegrityError):
+            SQLiteStore.restore_from(empty, target)
+        self.assertEqual(target.read_bytes(), b"untouched")
+
     def test_backup_and_restore(self) -> None:
         self.store.migrate()
         auth = ExecutionAuthority(self.store, clock=self.clock)

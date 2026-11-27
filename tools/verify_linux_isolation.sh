@@ -28,7 +28,7 @@ Path("/work/output").write_text("verified")
 print("bubblewrap: workspace write, host path hidden, private network, environment and capabilities verified")
 PY
 # The parent reads the kernel's effective limits inside the transient unit.
-sudo -n systemd-run --quiet --unit="$unit" --wait --collect --pipe \
+sudo -n systemd-run --expand-environment=no --quiet --unit="$unit" --wait --collect --pipe \
     -p MemoryMax=128M -p TasksMax=16 -p CPUQuota=50% -p RuntimeMaxSec=30 \
     -p KillMode=control-group /bin/bash -eu -c '
         group=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)

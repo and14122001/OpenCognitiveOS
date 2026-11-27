@@ -282,10 +282,12 @@ class TestM2SandboxS22S25(unittest.TestCase):
 
     def test_macos_seatbelt_profile_generation_unit(self) -> None:
         """Unit/Mock: Verify macOS Seatbelt SBPL profile denies default & network and scopes workspace."""
-        sbpl = MacOSSeatbeltSandboxBackend.build_sbpl_profile(self.ws)
+        # Use the target platform's path even on Windows CI.
+        with mock.patch.object(Path, "resolve", return_value="/private/tmp/ocos-work"):
+            sbpl = MacOSSeatbeltSandboxBackend.build_sbpl_profile(self.ws)
         self.assertIn("(deny default)", sbpl)
         self.assertIn("(deny network*)", sbpl)
-        self.assertIn(str(self.ws.resolve()), sbpl)
+        self.assertIn('(subpath "/private/tmp/ocos-work")', sbpl)
 
 
 if __name__ == "__main__":

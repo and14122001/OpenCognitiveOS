@@ -316,7 +316,9 @@ class TestM2WorktreeS21S22Round2(unittest.TestCase):
         original_ptr = git_ptr.read_text(encoding="utf-8")
 
         # Tamper .git pointer to forged location
-        git_ptr.write_text("gitdir: /tmp/forged-evil-repo/.git/worktrees/x\n", encoding="utf-8")
+        with git_ptr.open("r+", encoding="utf-8") as pointer:
+            pointer.write("gitdir: /tmp/forged-evil-repo/.git/worktrees/x\n")
+            pointer.truncate()
         with self.assertRaises(WorktreeVerificationError):
             self.mgr.cleanup_workspace(
                 "ws-forged-ptr",
@@ -348,7 +350,9 @@ class TestM2WorktreeS21S22Round2(unittest.TestCase):
         self.assertEqual(self.mgr.load_identity("ws-forged-lock").status, "NEEDS_RECONCILIATION")
 
         # Restore original_ptr on ws-forged-ptr just so tmpdir cleanup has no permission issues
-        git_ptr.write_text(original_ptr, encoding="utf-8")
+        with git_ptr.open("r+", encoding="utf-8") as pointer:
+            pointer.write(original_ptr)
+            pointer.truncate()
 
     def test_git_worktree_remove_failure_enters_needs_reconciliation_without_rmtree(self) -> None:
         """Fault Injection #4: Git remove failure -> NEEDS_RECONCILIATION, never rmtree or prune."""
