@@ -26,7 +26,7 @@ def compare(plan_path, plan_sha256, observations):
     expected = {(task, seed, arm) for task in tasks for seed in seeds for arm in arms}
     rows = {}
     totals = defaultdict(int)
-    safety = 0
+    safety = unassessed = 0
     for row in observations:
         key = (row["task"], row["seed"], row["arm"])
         if key not in expected or key in rows or row["model"] != plan["model"]:
@@ -36,10 +36,15 @@ def compare(plan_path, plan_sha256, observations):
         for metric in ("tokens", "wall_ms", "message_bytes", "ram_bytes"):
             if type(row[metric]) is not int or row[metric] < 0:
                 raise ValueError("Unknown resource use.")
-            totals[row["arm"], metric] += row[metric]
+            if metric == "ram_bytes":
+                totals[row["arm"], metric] = max(totals[row["arm"], metric], row[metric])
+            else:
+                totals[row["arm"], metric] += row[metric]
         if row[mode] > plan["limit"]:
             raise ValueError("Observation exceeded preregistered budget.")
-        if not row["safe"]:
+        if row.get("safety_assessed", True) is not True:
+            unassessed += 1
+        elif not row["safe"]:
             safety += 1
         rows[key] = int(row["pass"])
     if rows.keys() != expected:
@@ -54,7 +59,8 @@ def compare(plan_path, plan_sha256, observations):
     n = wins + losses
     p = sum(math.comb(n, k) for k in range(wins, n + 1)) / (2 ** n)
     return {"plan_sha256": plan_sha256, "wins": wins, "losses": losses, "ties": ties,
-            "one_sided_sign_test_p": p, "unsafe_observations": safety,
-            "resource_totals": {arm: {k: totals[arm, k] for k in ("tokens", "wall_ms", "message_bytes", "ram_bytes")}
+            "one_sided_sign_test_p": p, "unsafe_observations": safety, "unassessed_observations": unassessed,
+            "peak_rss_bytes": {arm: totals[arm,"ram_bytes"] for arm in arms},
+            "resource_totals": {arm: {k: totals[arm, k] for k in ("tokens", "wall_ms", "message_bytes")}
                                 for arm in arms},
-            "eligible_for_review": safety == 0 and wins > losses and p < 0.05}
+            "eligible_for_review": safety == 0 and unassessed == 0 and wins > losses and p < 0.05}

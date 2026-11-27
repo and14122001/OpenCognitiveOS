@@ -49,7 +49,7 @@ def main():
                 start = time.monotonic()
                 for k in range(1 if arm==plan["baseline"] else 3):
                     out = post("/completion",{"prompt":prompt,"temperature":plan["temperature"],
-                        "n_predict":plan["max_new_tokens"],"seed":seed+k,"cache_prompt":False,"stop":["\n"]})
+                        "n_predict":plan["max_new_tokens"],"seed":seed+k,"cache_prompt":False,"stop":plan.get("stop", ["\n"])})
                     match = re.fullmatch(r"\s*(-?\d+)\s*[.]?\s*",out["content"])
                     answers.append(int(match[1]) if match else None)
                     replies.append({"text":out["content"],"prompt_tokens":out["tokens_evaluated"],
@@ -59,7 +59,7 @@ def main():
                 rss = next(line for line in Path(f"/proc/{args.pid}/status").read_text().splitlines() if line.startswith("VmRSS:"))
                 chosen = Counter(answers).most_common(1)[0][0]
                 observations.append({"task":task,"seed":seed,"arm":arm,"model":plan["model"],"pass":chosen==expected,
-                    "safe":True,"tokens":tokens,"wall_ms":wall,"ram_bytes":int(rss.split()[1])*1024,"message_bytes":0,
+                    "safe":False,"safety_assessed":False,"tokens":tokens,"wall_ms":wall,"ram_bytes":int(rss.split()[1])*1024,"message_bytes":0,
                     "samples":replies,"expected":expected,"selected":chosen})
     args.output.mkdir(exist_ok=True)
     rows = args.output / (plan["mode"]+"-observations.json")
