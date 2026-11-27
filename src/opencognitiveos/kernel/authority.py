@@ -1349,7 +1349,7 @@ class ExecutionAuthority:
                 conn.execute("""CREATE TABLE IF NOT EXISTS broker_seals (
                     intent TEXT PRIMARY KEY REFERENCES effects(intent_id), tag TEXT NOT NULL)""")
                 digest = canonical_json_hash([unique_key, execution_id, epoch, receipt.intent_id,
-                    eff_row["args_hash"], eff_row["approval_ref"], receipt.outcome.value, receipt.evidence_hash])
+                    eff_row["args_hash"], eff_row["approval_ref"], receipt.outcome.value, receipt.external_ref, receipt.evidence_hash])
                 conn.execute("INSERT INTO broker_seals VALUES (?,?)",
                              (receipt.intent_id, seal(gate.verifier_key, "effect", digest)))
 

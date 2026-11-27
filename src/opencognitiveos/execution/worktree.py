@@ -200,6 +200,8 @@ class WorkspaceManager:
                 """
             )
 
+            conn.execute("""CREATE TABLE IF NOT EXISTS native_private_workspaces (
+                workspace_id TEXT PRIMARY KEY REFERENCES workspaces(workspace_id), tag TEXT NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS workspace_dispatch (
                 workspace_id TEXT PRIMARY KEY REFERENCES workspaces(workspace_id),
                 execution_id TEXT NOT NULL UNIQUE REFERENCES executions(execution_id),
@@ -489,6 +491,8 @@ class WorkspaceManager:
         task_id: str,
         base_sha: str,
         relative_dir: str | None = None,
+        native_only: bool = False,
+        controller_capability: object | None = None,
         before_finalize_hook: Callable[[Path], None] | None = None,
         before_commit_hook: Callable[[], None] | None = None,
     ) -> WorkspaceIdentity:
@@ -532,6 +536,11 @@ class WorkspaceManager:
             if task_row is None:
                 raise WorkspaceIdentityError(f"Task '{task_unique_key}' does not exist in ExecutionAuthority.")
 
+            if native_only:
+                gate = self.authority.evidence_completion
+                if (gate is None or gate.manager is not self or controller_capability is not self.authority._controller_capability
+                        or json.loads(task_row["spec_json"]).get("allowed_tools") != ["sandbox.python"]):
+                    raise WorkspaceIdentityError("Private native worktrees require exclusive broker authority.")
             if json.loads(task_row["spec_json"]).get("base_sha") != verified_sha:
                 raise WorkspaceIdentityError("Workspace SHA differs from TaskSpec.base_sha.")
 
@@ -636,6 +645,10 @@ class WorkspaceManager:
                 """,
                 (str(admin_dir), final_now, workspace_id),
             )
+            if native_only:
+                from opencognitiveos.execution.native_cleanup import workspace_tag
+                tag = workspace_tag(self.authority.evidence_completion.controller_key, ident_hash)
+                conn.execute("INSERT INTO native_private_workspaces VALUES (?,?)", (workspace_id, tag))
             if before_commit_hook is not None:
                 before_commit_hook()
 
@@ -674,8 +687,11 @@ class WorkspaceManager:
                 raise WorkspaceIdentityError("Cannot clean a workspace with an active lease.")
             if conn.execute("SELECT 1 FROM leases WHERE task_unique_key = ?", (ident.task_unique_key,)).fetchone():
                 raise WorkspaceIdentityError("Expired lease does not establish worker quiescence.")
-            if conn.execute("SELECT 1 FROM workspace_dispatch WHERE workspace_id = ?", (workspace_id,)).fetchone():
-                raise WorkspaceIdentityError("Dispatched workspace requires independent process termination evidence.")
+            dispatch = conn.execute("SELECT * FROM workspace_dispatch WHERE workspace_id = ?", (workspace_id,)).fetchone()
+            if dispatch:
+                from opencognitiveos.execution.native_cleanup import ready
+                if not ready(self, conn, ident, dispatch):
+                    raise WorkspaceIdentityError("Dispatched workspace requires independent process termination evidence.")
             claimed = conn.execute("UPDATE workspaces SET status = 'CLEANING', updated_at_utc = ? WHERE workspace_id = ? AND status = 'ACTIVE' AND identity_hash = ?", (self.clock.now_iso(), workspace_id, ident.identity_hash))
             if claimed.rowcount != 1:
                 raise WorkspaceIdentityError("Workspace is not available for cleanup.")

@@ -63,7 +63,8 @@ class NativeWorker(unittest.TestCase):
                 capture_world(auth, spec.unique_key, ["verify.py"], capability=auth._controller_capability)
             for status in (TaskStatus.PLANNED,TaskStatus.READY):
                 rec = auth.transition_task(spec.unique_key,status,expected_revision=rec.revision,actor_role="controller", controller_capability=auth._controller_capability)
-            ws = mgr.create_workspace(workspace_id="ws",repo_id="r",task_id="t",base_sha=sha)
+            ws = mgr.create_workspace(workspace_id="ws",repo_id="r",task_id="t",base_sha=sha,
+                                      native_only=True, controller_capability=auth._controller_capability)
             lease = auth.acquire_lease(spec.unique_key,"worker",ttl_seconds=90)
             fence = dict(worker_id="worker",execution_id=lease.execution_id,epoch=lease.fencing_epoch)
             auth.transition_task(spec.unique_key,TaskStatus.RUNNING,expected_revision=rec.revision,**fence)
@@ -94,6 +95,19 @@ class NativeWorker(unittest.TestCase):
                     stage("0" * 40, proposals)
                 with self.assertRaises(PolicyDeniedError):
                     stage(sha, proposals * 2)
+                from opencognitiveos.execution.worktree import WorkspaceIdentityError
+                with store.transaction() as conn:
+                    original_unit = conn.execute("SELECT external_ref FROM effects").fetchone()[0]
+                    conn.execute("UPDATE effects SET external_ref=?", ("ocos-worker-" + "f"*32 + ".service",))
+                with self.assertRaises(WorkspaceIdentityError):
+                    mgr.cleanup_workspace("ws", expected_repo_id="r", expected_task_id="t", expected_base_sha=sha)
+                self.assertTrue(Path(ws.worktree_path).exists())
+                with store.transaction() as conn:
+                    conn.execute("UPDATE effects SET external_ref=?", (original_unit,))
+                cleaned = mgr.cleanup_workspace("ws", expected_repo_id="r", expected_task_id="t", expected_base_sha=sha)
+                self.assertEqual(cleaned.status, "CLEANED")
+                self.assertFalse(Path(ws.worktree_path).exists())
+                self.assertTrue(auth.replay_verification(spec.unique_key))
                 if export_dir:
                     from opencognitiveos.storage.evidence_backup import export_snapshot
                     snapshot = export_snapshot(store, cas, export_dir)

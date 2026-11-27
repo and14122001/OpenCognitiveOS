@@ -28,6 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit-consistency", help="Audit cross-table DB consistency for a task.")
     p_audit.add_argument("--unique-key", required=True)
 
+    provision = sub.add_parser("create-native-workspace", help="Provision an exclusively brokered Linux worktree.")
+    cleanup = sub.add_parser("clean-native-workspace", help="Reclaim a proved quiescent task worktree.")
+    for action in (provision, cleanup):
+        action.add_argument("--workspace", required=True)
     world = sub.add_parser("capture-world", help="Capture the identity and content hashes of approved Git files.")
     world.add_argument("--path", action="append", required=True)
     media = sub.add_parser("attach-local", help="Attach bounded local text, PCM audio or RGB bitmap context.")
@@ -49,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, typ in (("worker", str), ("execution", str), ("epoch", int)):
         for command in (verify_file, approved):
             command.add_argument("--" + name, type=typ, required=True)
-    for command in (world, media, register, stage, replay, complete, verify_file, approved):
+    for command in (provision, cleanup, world, media, register, stage, replay, complete, verify_file, approved):
         command.add_argument("--config", required=True, help="Canonical path to operator-owned mode-0600 configuration.")
         command.add_argument("--unique-key", required=True)
     complete.add_argument("--worker", required=True)
@@ -149,9 +153,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     store.migrate()
     authority = ExecutionAuthority(store, clock=clock)
 
-    if args.command in ("capture-world", "attach-local", "register-acceptance", "stage-candidates", "complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
+    if args.command in ("create-native-workspace", "clean-native-workspace", "capture-world", "attach-local", "register-acceptance", "stage-candidates", "complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
         from opencognitiveos.verification.bootstrap import configure_evidence
         configure_evidence(authority, args.config)
+        if args.command in ("create-native-workspace", "clean-native-workspace"):
+            task = authority.get_task(args.unique_key).spec
+            manager = authority.evidence_completion.manager
+            if args.command == "create-native-workspace":
+                workspace = manager.create_workspace(workspace_id=args.workspace, repo_id=task.repo_id,
+                    task_id=task.task_id, base_sha=task.base_sha, native_only=True,
+                    controller_capability=authority._controller_capability)
+            else:
+                workspace = manager.cleanup_workspace(args.workspace, expected_repo_id=task.repo_id,
+                    expected_task_id=task.task_id, expected_base_sha=task.base_sha)
+            print(json.dumps({"workspace": workspace.workspace_id, "status": workspace.status}))
+            return 0
         if args.command == "capture-world":
             from opencognitiveos.kernel.world import capture_world
             digest, world = capture_world(authority, args.unique_key, args.path, capability=authority._controller_capability)

@@ -74,7 +74,7 @@ class EvidenceCompletion:
             require(log and len(rows) == 1, "Missing uniquely attested native effect.")
             effect = rows[0]
             digest = canonical_json_hash([task.unique_key, execution_id, epoch, effect["intent_id"], effect["args_hash"],
-                                          shash, effect["outcome"], log])
+                                          shash, effect["outcome"], effect["external_ref"], log])
             require(hmac.compare_digest(effect["tag"], seal(self.verifier_key, "effect", digest)), "Invalid broker seal.")
             binding["worker_log"] = log
         return spec, manifest, binding
