@@ -1,18 +1,20 @@
-"""CI entry point, inside a credential-free bubblewrap namespace; no inference request."""
+"""CI entry point, inside a credential-free bubblewrap namespace with a pinned local CPU model."""
 import asyncio
 import sys
 
-from opencognitiveos.providers.acp import initialize, open_session
+from opencognitiveos.providers.acp import initialize, open_session, prompt_text as acp_prompt
 from opencognitiveos.providers.pi_rpc import get_state, prompt_text
 
 
 async def main():
     adapter = sys.argv[1]
-    model = None
+    from local_agent_model import configure_acp, configure_pi, generated_tokens, start
+    model = start()
     if adapter == "pi":
-        from local_agent_model import configure_pi, start
-        model = start()
         configure_pi()
+    else:
+        configure_acp(adapter)
+    before = generated_tokens()
     process = await asyncio.create_subprocess_exec(*sys.argv[2:], stdin=asyncio.subprocess.PIPE,
                                                     stdout=asyncio.subprocess.PIPE, limit=65536)
     try:
@@ -24,8 +26,14 @@ async def main():
         else:
             result = await initialize(process.stdout, process.stdin, timeout=30)
             print(adapter, "ACP version", result["protocolVersion"], flush=True)
-            await open_session(process.stdout, process.stdin, cwd="/tmp", timeout=30)
+            sid = await open_session(process.stdout, process.stdin, cwd="/tmp", timeout=30)
             print(adapter, "credential-free session/new succeeded", flush=True)
+            answer = await acp_prompt(process.stdout, process.stdin, sid, "What is 2 + 2?", timeout=65)
+            print(adapter, "completed text characters:", len(answer), flush=True)
+        generated = generated_tokens() - before
+        if generated <= 0:
+            raise RuntimeError("No generation on the isolated local server")
+        print(adapter, "verified local model generated tokens:", generated, flush=True)
     finally:
         if model is not None:
             model.terminate()

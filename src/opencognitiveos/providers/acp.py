@@ -74,3 +74,60 @@ async def open_session(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         raise ACPProtocolError("Session notification quota exhausted.")
 
     return await asyncio.wait_for(exchange(), timeout=timeout)
+
+
+async def prompt_text(reader, writer, session_id, message, *, timeout=45):
+    """Consume a bounded ACP text turn on a supervised transport with no client tools."""
+    if (not isinstance(session_id, str) or not 0 < len(session_id) <= 512 or not isinstance(message, str)
+            or not 0 < len(message.encode()) <= 4096):
+        raise ACPProtocolError("Invalid text turn")
+    rid = str(uuid.uuid4())
+
+    async def send(packet):
+        writer.write(json.dumps({"jsonrpc":"2.0", **packet}).encode() + b"\n")
+        await writer.drain()
+
+    async def exchange():
+        await send({"id":rid, "method":"session/prompt", "params":{"sessionId":session_id,
+                    "prompt":[{"type":"text", "text":message}]}})
+        parts = []
+        total = 0
+        for _ in range(256):
+            raw = await reader.readuntil(b"\n")
+            if len(raw) > 65536:
+                raise ACPProtocolError("ACP frame quota exceeded")
+            event = json.loads(raw)
+            if event.get("jsonrpc") != "2.0":
+                raise ACPProtocolError("Malformed ACP frame")
+            if "method" in event:
+                params = event.get("params", {})
+                if (event["method"] != "session/update" or "id" in event
+                        or params.get("sessionId") != session_id):
+                    raise ACPProtocolError("Unapproved ACP request or session")
+                change = params["update"]
+                kind = change["sessionUpdate"]
+                if kind in ("tool_call", "tool_call_update"):
+                    raise ACPProtocolError("Tools disabled for this text turn")
+                if kind == "agent_message_chunk":
+                    content = change["content"]
+                    if content["type"] != "text" or not isinstance(content.get("text"), str):
+                        raise ACPProtocolError("Unexpected ACP content")
+                    total += len(content["text"].encode())
+                    if total > 16384:
+                        raise ACPProtocolError("ACP turn exceeded text budget")
+                    parts.append(content["text"])
+            elif (event.get("id") == rid and "error" not in event
+                  and event.get("result", {}).get("stopReason") in ("end_turn", "max_tokens") and total):
+                return "".join(parts)
+            else:
+                raise ACPProtocolError("ACP turn failed or reply is unrelated")
+        raise ACPProtocolError("ACP frame count exceeded")
+
+    try:
+        return await asyncio.wait_for(exchange(), timeout)
+    except BaseException:
+        # The supervisor still owns process teardown and quota settlement.
+        if not writer.is_closing():
+            writer.write(json.dumps({"jsonrpc":"2.0", "method":"session/cancel",
+                         "params":{"sessionId":session_id}}).encode() + b"\n")
+        raise

@@ -48,7 +48,7 @@ if [[ "$provider" == hermes ]]; then
     mv "$upstream" "$stage/hermes-source"
     args+=(--ro-bind "$stage/hermes-source" "$upstream")
 fi
-if [[ "$provider" == pi ]]; then
+{
     mkdir "$stage/model-runtime"
     curl --fail --location --retry 2 -o "$stage/llama.tar.gz" https://github.com/ggml-org/llama.cpp/releases/download/b12810/llama-b12810-bin-ubuntu-x64.tar.gz
     echo "63b94be37dcc34cb4933554d4f998e9649841b23da7ffc71d1f66d63762464d7  $stage/llama.tar.gz" | sha256sum --check
@@ -57,12 +57,14 @@ if [[ "$provider" == pi ]]; then
     echo "2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d  $stage/model.gguf" | sha256sum --check
     args+=(--ro-bind "$stage/model-runtime" /model-runtime --ro-bind "$stage/model.gguf" /model-fixture.gguf
            --ro-bind "$PWD/tools/local_agent_model.py" /local_agent_model.py)
+}
+if [[ "$provider" == pi ]]; then
     argv+=(--model local-fixture/ocos-fixture --no-tools --no-session --no-extensions --system-prompt "Answer arithmetic briefly.")
 fi
 cp -r src "$stage/src"
 cp tools/provider_handshake.py "$stage/probe.py"
 sudo -n systemd-run --quiet --expand-environment=no --wait --collect --pipe \
-    -p MemoryMax=2G -p TasksMax=128 -p RuntimeMaxSec=90 -p KillMode=control-group \
+    -p MemoryMax=2G -p TasksMax=128 -p RuntimeMaxSec=150 -p KillMode=control-group \
     /usr/bin/bwrap --unshare-all --die-with-parent --new-session --clearenv --uid 65534 --gid 65534 \
     --cap-drop ALL "${args[@]}" --ro-bind "$stage/provider" /provider --ro-bind "$stage/src" /src \
     --ro-bind "$stage/probe.py" /probe.py --proc /proc --dev /dev --tmpfs /tmp --chdir /tmp \
