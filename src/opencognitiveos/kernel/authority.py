@@ -676,6 +676,16 @@ class ExecutionAuthority:
             current_epoch = int(row["fencing_epoch"])
             spec = self._spec_from_row(row)
 
+            # R4 tasks must not fall back to the legacy M1 verifier.
+            # Until trusted evidence execution is integrated, fail closed.
+            registry_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='acceptance_specs'"
+            ).fetchone()
+            if registry_exists and conn.execute(
+                "SELECT 1 FROM acceptance_specs WHERE task_unique_key = ?", (unique_key,)
+            ).fetchone():
+                raise VerificationFailedError("R4 trusted evidence completion is not enabled; legacy completion denied.")
+
             if current_status != TaskStatus.VERIFYING:
                 raise InvalidTransitionError(
                     f"verify_and_complete requires status VERIFYING, got {current_status.value}."
@@ -835,6 +845,11 @@ class ExecutionAuthority:
         now_iso = _format_utc(now_dt)
 
         with self.store.transaction() as conn:
+            now_dt = self.clock.now_utc()
+            now_iso = _format_utc(now_dt)
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces'").fetchone():
+                if conn.execute("SELECT 1 FROM workspaces WHERE task_unique_key = ? AND status IN ('CREATING', 'CLEANING', 'NEEDS_RECONCILIATION')", (unique_key,)).fetchone():
+                    raise ReconciliationRequiredError("Workspace creation, cleanup or reconciliation pending.")
             task_row = conn.execute("SELECT * FROM tasks WHERE unique_key = ?;", (unique_key,)).fetchone()
             if task_row is None:
                 raise TaskNotFoundError(f"Task '{unique_key}' not found.")
@@ -868,6 +883,16 @@ class ExecutionAuthority:
                         f"until {existing_lease['expires_at_utc']}."
                     )
 
+            workspace_id = None
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces'").fetchone():
+                candidates = conn.execute("SELECT workspace_id FROM workspaces WHERE task_unique_key=? AND status='ACTIVE'", (unique_key,)).fetchall()
+                if len(candidates) > 1:
+                    raise ReconciliationRequiredError("Ambiguous workspace dispatch.")
+                if candidates:
+                    workspace_id = candidates[0]["workspace_id"]
+                    if existing_lease is not None or conn.execute("SELECT 1 FROM workspace_dispatch WHERE workspace_id=?", (workspace_id,)).fetchone():
+                        raise ReconciliationRequiredError("Previously dispatched workspace requires reconciliation.")
+
             lease_ttl = ttl_seconds if ttl_seconds is not None else spec.budget.lease_seconds
             expires_iso = _format_utc(now_dt + timedelta(seconds=lease_ttl))
             new_epoch = int(task_row["fencing_epoch"]) + 1
@@ -900,6 +925,8 @@ class ExecutionAuthority:
                 """,
                 (unique_key, execution_id, worker_id, new_epoch, now_iso, now_iso, expires_iso),
             )
+            if workspace_id is not None:
+                conn.execute("INSERT INTO workspace_dispatch(workspace_id, execution_id, epoch, worker_id) VALUES (?, ?, ?, ?)", (workspace_id, execution_id, new_epoch, worker_id))
             self._append_event_and_outbox(
                 conn,
                 event_type="LEASE_ACQUIRED",
