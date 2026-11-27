@@ -37,3 +37,29 @@
 | S43–S48 | M4 | Google AI Pro agy/DirectSDK、Codex OAuth、共用配額池與資料分類外傳阻斷 | Pending |
 | S49–S54 | M4–M5 | 軟體世界模型、DAG 遞迴控制（深度 3/分支 3/總節點 40）、時序因果知識圖譜 | Pending |
 | S55–S60 | M4–M6 | Evolution Lab A/B 比較、授權升級與回滾、多模態契約、跨設備復原與七天耐久測試 | Pending |
+
+## 3. PR #5 工程實測（2026-11-27）
+
+本節沿用 PR #4 以前 M2 任務表的逐項定義。Drive R4 交付物以 S26/S28/S29/S30 表示規格、CAS、Manifest、反例回歸，故同時記錄功能名稱。原 M1 歷史結果保留於上方。安全結論限於明列的平台、入口和案例。
+
+| 編號 | 已執行 | 尚待驗收 |
+|---|---|---|
+| S21 | 固定完整 commit SHA、detached worktree、雙向 Git metadata | 目標機部署 |
+| S22 | SQLite 工作區唯一性、租約、清理競態、不明工作區留存；原生專用工作區新增簽章、同次開機、單一 unit 與終態收據回收檢查 | 其他派送來源維持隔離對帳 |
+| S23 | traversal、symlink、硬連結、競態防護回歸；Linux 只將控制器取得的固定 Git blob 提供給 worker | Windows junction 的原生工具路徑 |
+| S24 | Ubuntu 正式 broker 真實執行 bubblewrap 和 cgroup v2，未知後端拒絕 | Darwin 與 Windows 的原生隔離 |
+| S25 | Linux 獨立 network namespace、宿主網路預設拒絕 | 跨平台原生等價驗證 |
+| S26 | Linux 清除繼承環境、白名單限制；R4 AcceptanceSpec 驗簽及竄改回歸 | 目標部署的金鑰佈建與輪替 |
+| S27 | 批准的固定單檔 Python 綁定 task、lease、execution、epoch、worktree、spec 與 broker effect receipt；兩個原生工作槽 | 一般編輯／建置工具代理與完整工作區輸出 |
+| S28 | Linux 真實子程序逾時及終止、非零結果留存；R4 CAS 跨程序容量、去重及重驗 | 未知 unit 狀態持續保留供對帳 |
+| S29 | 唯讀獨立驗證固定 Git blob；另一個 cgroup 執行固定 Python 驗收程式，驗證 worker 候選位元組，錯誤內容拒絕封存 | 多檔建置／測試工具鏈 |
+| S30 | 兩把獨立信任金鑰、簽章與 SHA 重驗、CAS 損毀拒絕、狀態／收據／Outbox 交易回滾、重播 | 完整工具鏈與目標設備驗收 |
+| S31–42 | Hermes 與 OpenCode ACP、Pi RPC 實際呼叫本地模型及文字回覆；Apple arm64 MLX CPU、MLX-LM 與 oMLX 原生 HTTP 生成及用量結算 | 長程工程任務、取消與目標設備模型比較 |
+| S43–48 | 零成本任務授權、資料分類、共池、保留與結算；官方 Google Gen AI SDK 3.6.1 真實 HTTP 序列化／反序列化、合成 loopback 服務；官方 Codex app-server 未登入狀態實測 | 真實 agy、DirectSDK、Codex OAuth 與帳戶零成本權益 |
+| S49–54 | 固定 Git tree／blob 軟體檔案清冊、DAG 前置依賴、深度 3／分支 3、父額度共享；可重播證據圖與矛盾邊 | 完整世界模型與端對端多代理協作 |
+| S55–60 | Linux 原生工作證據在另一台 macOS 主機還原並重播、版本化發布與回滾、配對小模型實測；文字／PCM／RGB 附件契約及快照 | 真實影音模型輸入、目標設備災難復原與七天耐久 |
+| S61–64 | SQLite 任務訊息、作用域與 epoch、TTL、順序與確認、容量限制、父 token／步數保留 | 完整拒絕稽核及跨群組壓力測試 |
+| S65–69 | 隔離推理快照、拓撲版本、取消級聯、證據候選 CLI、模型／策略固定與切換防護 | 內容交接、候選變更獨立驗證及完整共同錯誤測試 |
+| S70–72 | 三輪事前登記；第三輪六策略 × 30 題 × 2 seeds × 2 種預算，720 筆，保留原始輸出、token、KV 配置、RSS、通信及時間；本次不升級 | 工程任務盲測、共同錯誤的獨立安全評估、目標機成本與七天耐久 |
+
+本地重跑、逐項日誌與上游版本見 [驗證紀錄](validation/m2/STATUS.md)。模型原始輸出見 [配對實驗](validation/ab/README.md)。

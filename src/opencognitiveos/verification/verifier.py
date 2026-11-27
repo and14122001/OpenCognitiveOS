@@ -55,6 +55,20 @@ class IndependentVerifier:
         if not spec.acceptance_hash:
             raise VerificationFailedError("TaskSpec.acceptance_hash is empty.")
 
+        if isinstance(output_payload, dict) and isinstance(output_payload.get("verified_evidence"), dict):
+            binding = output_payload["verified_evidence"]
+            if "worker_log" in binding:
+                if (set(output_payload) != {"output_hash", "verified_evidence"} or not binding["worker_log"]
+                        or output_payload["output_hash"] != binding["worker_log"] or len(effects) != 1):
+                    raise VerificationFailedError("Invalid native output binding.")
+                effect = effects[0]
+                if (effect["task_unique_key"] != spec.unique_key or effect["execution_id"] != execution_id
+                        or effect["epoch"] != epoch or effect["outcome"] != "SUCCEEDED"
+                        or effect["tool"] != "sandbox.python" or effect["tool"] not in spec.allowed_tools
+                        or effect["approval_ref"] != binding["spec_hash"] or effect["evidence_hash"] != binding["worker_log"]):
+                    raise VerificationFailedError("Native execution and pinned evidence differ.")
+                return output_payload
+
         expected_acceptance = canonical_json_hash({"goal": spec.goal})
         if spec.acceptance_hash != expected_acceptance:
             raise VerificationFailedError(
@@ -178,7 +192,8 @@ class IndependentVerifier:
             passed=True,
             evidence_hash=evidence_hash,
             evidence_json=json.dumps(evidence_obj, sort_keys=True, ensure_ascii=False),
-            verifier_name=self.name,
+            verifier_name=("independent-native-evidence-v1" if "worker_log" in
+                           validated_output.get("verified_evidence", {}) else self.name),
             verified_at_utc=self.clock.now_iso(),
         )
 

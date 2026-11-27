@@ -44,7 +44,7 @@ class TestOutboxAndRestart(unittest.TestCase):
                 rec.unique_key,
                 TaskStatus.PLANNED,
                 expected_revision=rec.revision,
-                actor_role="controller",
+                actor_role="controller", controller_capability=self.auth._controller_capability,
                 before_commit_hook=crash_before_commit,
             )
 
@@ -60,7 +60,7 @@ class TestOutboxAndRestart(unittest.TestCase):
     def test_restart_dispatches_pending_outbox_and_deduplicates_redelivery(self) -> None:
         rec, _ = self.auth.submit_task(self.spec)
         self.auth.transition_task(
-            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
 
         restarted_store = SQLiteStore(self.db_path, clock=self.clock)

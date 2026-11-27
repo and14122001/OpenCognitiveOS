@@ -390,8 +390,22 @@ class SQLiteStore:
     def restore_from(cls, backup_path: str | Path, target_path: str | Path, clock: Clock | None = None) -> SQLiteStore:
         src = Path(backup_path)
         dst = Path(target_path)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(str(src))) as src_conn:
+        source_uri = src.resolve(strict=True).as_uri() + "?mode=ro"
+        if src.resolve() == dst.resolve():
+            raise DatabaseIntegrityError("Backup and destination must be different files.")
+        with closing(sqlite3.connect(source_uri, uri=True)) as src_conn:
+            # Validate the same read snapshot that backup() will copy.
+            src_conn.execute("BEGIN")
+            tables = {row[0] for row in src_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            if not {"tasks", "leases", "verification_receipts"}.issubset(tables):
+                raise DatabaseIntegrityError("Backup lacks required OpenCognitiveOS tables.")
+            if src_conn.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                raise DatabaseIntegrityError("Backup failed SQLite integrity_check.")
+            if src_conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise DatabaseIntegrityError("Backup contains invalid foreign keys.")
+            dst.parent.mkdir(parents=True, exist_ok=True)
             with closing(sqlite3.connect(str(dst))) as dst_conn:
                 src_conn.backup(dst_conn)
         store = cls(dst, clock=clock)

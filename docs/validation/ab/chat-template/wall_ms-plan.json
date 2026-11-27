@@ -1,0 +1,51 @@
+{
+  "tasks": [
+    "16 + 3",
+    "5 - 2",
+    "22 * 8",
+    "14 + 7",
+    "19 - 15",
+    "24 * 2",
+    "9 + 13",
+    "13 - 3",
+    "22 * 16",
+    "17 + 5",
+    "17 - 6",
+    "13 * 13",
+    "21 + 15",
+    "10 - 3",
+    "5 * 5",
+    "22 + 8",
+    "15 - 8",
+    "21 * 7",
+    "7 + 14",
+    "12 - 4",
+    "12 * 11",
+    "9 + 5",
+    "15 - 2",
+    "6 * 4",
+    "14 + 16",
+    "16 - 14",
+    "10 * 6",
+    "22 + 15",
+    "13 - 9",
+    "9 * 10"
+  ],
+  "seeds": [
+    41,
+    73
+  ],
+  "baseline": "single",
+  "candidate": "independent",
+  "model": "SmolLM2-135M-Instruct-Q4_K_M@2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d",
+  "runtime": "llama.cpp b12810 Ubuntu x64 sha256:63b94be37dcc34cb4933554d4f998e9649841b23da7ffc71d1f66d63762464d7",
+  "protocol": "Three independent samples, majority integer; first sample wins ties. Single uses one sample. Exact integer match. No tools. Seeds offset by sample index. Alternate arm order within task and seed.",
+  "prompt": "<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n<|im_start|>user\nReturn only the integer answer. What is {task}?<|im_end|>\n<|im_start|>assistant\n",
+  "temperature": 0.7,
+  "max_new_tokens": 8,
+  "mode": "wall_ms",
+  "limit": 4000,
+  "stop": [
+    "<|im_end|>"
+  ]
+}

@@ -101,6 +101,9 @@ class ExecutionAuthority:
         policy_gate: PolicyGate | None = None,
         verifier: IndependentVerifier | None = None,
     ) -> None:
+        self._controller_capability = object()
+        self._broker_capability = object()
+        self.evidence_completion = None
         self.store = store
         self.clock: Clock = clock or store.clock or SystemClock()
         self.policy_gate = policy_gate or PolicyGate()
@@ -235,6 +238,10 @@ class ExecutionAuthority:
         epoch: int | None,
         now_dt: datetime,
     ) -> sqlite3.Row:
+        task = conn.execute("SELECT project_id, repo_id, parent_id FROM tasks WHERE unique_key=?", (unique_key,)).fetchone()
+        if task is None:
+            raise TaskNotFoundError(unique_key)
+        ExecutionAuthority._check_ancestors(conn, task)
         if epoch is None or not worker_id or not execution_id:
             raise StaleEpochError(
                 f"Worker operation on '{unique_key}' requires worker_id, execution_id, and epoch."
@@ -341,7 +348,20 @@ class ExecutionAuthority:
             )
             output_payload = json.loads(v_row["output_payload_json"])
             effects = json.loads(v_row["effects_snapshot_json"])
+            if not self._replay_sealed(conn, spec, receipt, output_payload):
+                return False
         return IndependentVerifier.replay_verify(receipt, spec, effects=effects, output_payload=output_payload)
+
+    def _replay_sealed(self, conn, spec, receipt, output_payload):
+        binding = output_payload.get("verified_evidence") if isinstance(output_payload, dict) else None
+        if binding is None:
+            return spec.base_sha == "HEAD"
+        if self.evidence_completion is None or not isinstance(binding, dict):
+            return False
+        try:
+            return self.evidence_completion.replay(conn, spec, binding, receipt.execution_id, receipt.epoch)
+        except (VerificationFailedError, KeyError, ValueError, TypeError, OSError, sqlite3.Error):
+            return False
 
     def audit_database_consistency(self, unique_key: str) -> dict[str, Any]:
         """Single-transaction cross-table consistency audit (NOT defense against full-DB-write attackers)."""
@@ -391,7 +411,7 @@ class ExecutionAuthority:
                 except (TypeError, ValueError) as exc:
                     raise DatabaseIntegrityError(f"Corrupt verification_receipts JSON for '{unique_key}': {exc}") from exc
 
-                if not IndependentVerifier.replay_verify(
+                if not self._replay_sealed(conn, spec, receipt, output_payload) or not IndependentVerifier.replay_verify(
                     receipt, spec, effects=snapshot_effects, output_payload=output_payload
                 ):
                     raise DatabaseIntegrityError(f"Historical snapshot replay failed for '{unique_key}'.")
@@ -460,6 +480,66 @@ class ExecutionAuthority:
                     pass
         return result_summary
 
+    @staticmethod
+    def _check_ancestors(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+        for _ in range(4):
+            if row["parent_id"] is None:
+                return
+            row = conn.execute(
+                "SELECT project_id, repo_id, status, parent_id FROM tasks WHERE project_id=? AND repo_id=? AND task_id=?",
+                (row["project_id"], row["repo_id"], row["parent_id"]),
+            ).fetchone()
+            if row is None or row["status"] in ("CANCELLED", "FAILED", "SUCCEEDED"):
+                raise PolicyDeniedError("Parent no longer authorizes child execution.")
+        raise PolicyDeniedError("Invalid persisted task ancestry.")
+
+    @staticmethod
+    def _reserved_child_steps(conn: sqlite3.Connection, spec: TaskSpec) -> int:
+        children = conn.execute(
+            "SELECT spec_json FROM tasks WHERE repo_id=? AND project_id=? AND parent_id=?",
+            (spec.repo_id, spec.project_id, spec.task_id),
+        )
+        return sum(int(json.loads(row[0])["budget"]["max_steps"]) for row in children)
+
+    def _validate_task_graph(self, conn: sqlite3.Connection, spec: TaskSpec) -> None:
+        # Dependencies only point to already admitted tasks. Edges are immutable.
+        for key in spec.dependencies:
+            if not conn.execute(
+                "SELECT 1 FROM tasks WHERE unique_key=? AND project_id=? AND repo_id=?",
+                (key, spec.project_id, spec.repo_id),
+            ).fetchone():
+                raise PolicyDeniedError("Dependency outside task scope or missing.")
+        if spec.parent_id is None:
+            return
+        ancestor_id = spec.parent_id
+        for depth in range(1, 5):
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE repo_id=? AND project_id=? AND task_id=?",
+                (spec.repo_id, spec.project_id, ancestor_id),
+            ).fetchone()
+            if row is None or depth > 3 or row["status"] in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                raise PolicyDeniedError("Task ancestry unavailable, terminal, or exceeds depth three.")
+            if depth == 1:
+                parent = self._spec_from_row(row)
+                siblings = conn.execute(
+                    "SELECT COUNT(*) FROM tasks WHERE repo_id=? AND project_id=? AND parent_id=?",
+                    (spec.repo_id, spec.project_id, parent.task_id),
+                ).fetchone()[0]
+                # Child retries and cloud use await a shared reservation ledger.
+                if (siblings >= 3 or spec.cloud_approved or spec.budget.max_cost_usd != 0
+                        or spec.budget.max_retries != 0 or spec.base_sha != parent.base_sha
+                        or spec.deadline != parent.deadline or spec.data_class != parent.data_class
+                        or not set(spec.allowed_paths) <= set(parent.allowed_paths)
+                        or not set(spec.allowed_providers) <= set(parent.allowed_providers)
+                        or not set(spec.allowed_tools) <= set(parent.allowed_tools)):
+                    raise PolicyDeniedError("Child exceeds parent scope or branching limits.")
+                available = parent.budget.max_steps - row["step_count"] - self._reserved_child_steps(conn, parent)
+                if not 0 < spec.budget.max_steps <= available:
+                    raise BudgetExceededError("Child step reservation exceeds parent balance.")
+            ancestor_id = row["parent_id"]
+            if ancestor_id is None:
+                return
+
     def submit_task(self, spec: TaskSpec) -> tuple[TaskRecord, bool]:
         """Submit task idempotently by repo_id::task_id. Returns (record, created)."""
         unique_key = spec.unique_key
@@ -477,6 +557,7 @@ class ExecutionAuthority:
                     )
                 return self._task_from_row(existing), False
 
+            self._validate_task_graph(conn, spec)
             conn.execute(
                 """
                 INSERT OR IGNORE INTO projects (project_id, name, created_at_utc)
@@ -523,6 +604,27 @@ class ExecutionAuthority:
             row = conn.execute("SELECT * FROM tasks WHERE unique_key = ?;", (unique_key,)).fetchone()
             return self._task_from_row(row), True
 
+    def _cancel_descendants(self, conn, spec, now_iso):
+        rows = conn.execute("""WITH RECURSIVE descendants(task_id) AS (
+            SELECT task_id FROM tasks WHERE project_id=? AND repo_id=? AND parent_id=?
+            UNION SELECT t.task_id FROM tasks t JOIN descendants d ON t.parent_id=d.task_id
+            WHERE t.project_id=? AND t.repo_id=?)
+            SELECT t.* FROM tasks t JOIN descendants d ON d.task_id=t.task_id
+            WHERE t.project_id=? AND t.repo_id=? AND t.status NOT IN ('SUCCEEDED','FAILED','CANCELLED')""",
+            (spec.project_id, spec.repo_id, spec.task_id, spec.project_id, spec.repo_id, spec.project_id, spec.repo_id))
+        for child in rows.fetchall():
+            key = child["unique_key"]
+            pending = conn.execute("SELECT 1 FROM effects WHERE task_unique_key=? AND outcome IN ('PENDING','UNKNOWN')",
+                                   (key,)).fetchone()
+            state = "NEEDS_RECONCILIATION" if pending else "CANCELLED"
+            conn.execute("DELETE FROM leases WHERE task_unique_key=?", (key,))
+            conn.execute("UPDATE tasks SET status=?, revision=revision+1, updated_at_utc=? WHERE unique_key=?",
+                         (state, now_iso, key))
+            self._append_event_and_outbox(conn, event_type="TASK_" + state, task_unique_key=key,
+                execution_id="controller", epoch=child["fencing_epoch"],
+                payload={"from":child["status"], "to":state, "ancestor":spec.unique_key,
+                         "revision":child["revision"]+1})
+
     def transition_task(
         self,
         unique_key: str,
@@ -530,6 +632,7 @@ class ExecutionAuthority:
         *,
         expected_revision: int,
         actor_role: str = "worker",
+        controller_capability: object | None = None,
         epoch: int | None = None,
         worker_id: str | None = None,
         execution_id: str | None = None,
@@ -539,6 +642,8 @@ class ExecutionAuthority:
         before_commit_hook: Callable[[sqlite3.Connection], None] | None = None,
     ) -> TaskRecord:
         """Transition task status atomically with CAS revision, role/fencing enforcement, and outbox."""
+        if actor_role == "controller" and controller_capability is not self._controller_capability:
+            raise PolicyDeniedError("Controller transition requires control-plane authorization.")
         if actor_role not in {"worker", "controller"}:
             raise PolicyDeniedError(f"Invalid actor_role '{actor_role}'.")
 
@@ -586,25 +691,7 @@ class ExecutionAuthority:
                 )
 
             if target_status == TaskStatus.SUCCEEDED:
-                if not verification_id:
-                    raise VerificationFailedError(
-                        f"Cannot transition '{unique_key}' to SUCCEEDED without a persisted VerificationReceipt."
-                    )
-                v_row = conn.execute(
-                    "SELECT * FROM verification_receipts WHERE verification_id = ?;", (verification_id,)
-                ).fetchone()
-                if (
-                    v_row is None
-                    or v_row["task_unique_key"] != unique_key
-                    or v_row["acceptance_hash"] != spec.acceptance_hash
-                    or v_row["execution_id"] != execution_id
-                    or int(v_row["epoch"]) != current_epoch
-                    or int(v_row["revision"]) != current_rev
-                    or int(v_row["passed"]) != 1
-                ):
-                    raise VerificationFailedError(
-                        f"VerificationReceipt '{verification_id}' missing or does not bind task/acceptance/execution/epoch/revision."
-                    )
+                raise VerificationFailedError("Only the atomic verifier may commit SUCCEEDED.")
 
             new_rev = current_rev + 1
             result_json = json.dumps(result, sort_keys=True, ensure_ascii=False) if result is not None else row["result_json"]
@@ -626,6 +713,9 @@ class ExecutionAuthority:
                 TaskStatus.NEEDS_RECONCILIATION,
             }:
                 conn.execute("DELETE FROM leases WHERE task_unique_key = ?;", (unique_key,))
+
+            if target_status == TaskStatus.CANCELLED:
+                self._cancel_descendants(conn, spec, now_iso)
 
             self._append_event_and_outbox(
                 conn,
@@ -656,6 +746,7 @@ class ExecutionAuthority:
         execution_id: str,
         epoch: int,
         expected_revision: int,
+        evidence_id: str | None = None,
         verifier: IndependentVerifier | None = None,
         output_payload: dict[str, Any] | None = None,
         before_commit_hook: Callable[[sqlite3.Connection], None] | None = None,
@@ -675,6 +766,28 @@ class ExecutionAuthority:
             current_rev = int(row["revision"])
             current_epoch = int(row["fencing_epoch"])
             spec = self._spec_from_row(row)
+
+            # R4 tasks must not fall back to the legacy M1 verifier.
+            # Only the explicitly offline mock contract may use the M1 verifier.
+            registry_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='acceptance_specs'"
+            ).fetchone()
+            workspace_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces'"
+            ).fetchone()
+            has_workspace = workspace_table and conn.execute(
+                "SELECT 1 FROM workspaces WHERE task_unique_key=?", (unique_key,)
+            ).fetchone()
+            registered = registry_exists and conn.execute(
+                "SELECT 1 FROM acceptance_specs WHERE task_unique_key=?", (unique_key,)
+            ).fetchone()
+            mock_only = (spec.base_sha == "HEAD" and not spec.cloud_approved
+                         and spec.allowed_providers == ("mock-local",)
+                         and set(spec.allowed_tools) <= {"mock.echo", "mock.write_note"})
+            governed = (not mock_only or self.evidence_completion is not None or has_workspace
+                        or registered or evidence_id is not None)
+            if governed and (not has_workspace or not registered or not evidence_id or self.evidence_completion is None):
+                raise VerificationFailedError("Governed completion requires a trusted manifest and workspace; legacy completion denied.")
 
             if current_status != TaskStatus.VERIFYING:
                 raise InvalidTransitionError(
@@ -709,6 +822,17 @@ class ExecutionAuthority:
                 (execution_id, unique_key, execution_id, current_epoch, execution_id),
             ).fetchall()
             effects = [dict(r) for r in eff_rows]
+
+            if isinstance(output_payload, dict) and "verified_evidence" in output_payload:
+                raise VerificationFailedError("Evidence bindings are reserved for the controller.")
+            if governed:
+                if self.evidence_completion.manager.authority is not self:
+                    raise VerificationFailedError("Wrong workspace authority.")
+                binding = self.evidence_completion.verify(conn, spec, evidence_id, worker_id, execution_id, epoch)
+                if "worker_log" in binding:
+                    output_payload = {"output_hash": binding["worker_log"], "verified_evidence": binding}
+                else:
+                    output_payload = {**(output_payload or {}), "verified_evidence": binding}
 
             v_receipt = self.verifier.verify(
                 spec,
@@ -835,11 +959,24 @@ class ExecutionAuthority:
         now_iso = _format_utc(now_dt)
 
         with self.store.transaction() as conn:
+            now_dt = self.clock.now_utc()
+            now_iso = _format_utc(now_dt)
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces'").fetchone():
+                if conn.execute("SELECT 1 FROM workspaces WHERE task_unique_key = ? AND status IN ('CREATING', 'CLEANING', 'NEEDS_RECONCILIATION')", (unique_key,)).fetchone():
+                    raise ReconciliationRequiredError("Workspace creation, cleanup or reconciliation pending.")
             task_row = conn.execute("SELECT * FROM tasks WHERE unique_key = ?;", (unique_key,)).fetchone()
             if task_row is None:
                 raise TaskNotFoundError(f"Task '{unique_key}' not found.")
             spec = self._spec_from_row(task_row)
             self._check_deadline(spec, now_dt)
+
+            for key in spec.dependencies:
+                if not conn.execute(
+                    "SELECT 1 FROM tasks WHERE unique_key=? AND project_id=? AND repo_id=? AND status='SUCCEEDED'",
+                    (key, spec.project_id, spec.repo_id),
+                ).fetchone():
+                    raise PolicyDeniedError("Dependency has no successful terminal result.")
+            self._check_ancestors(conn, task_row)
 
             status = TaskStatus(task_row["status"])
             if status == TaskStatus.NEEDS_RECONCILIATION:
@@ -867,6 +1004,16 @@ class ExecutionAuthority:
                         f"Task '{unique_key}' already leased by '{existing_lease['worker_id']}' "
                         f"until {existing_lease['expires_at_utc']}."
                     )
+
+            workspace_id = None
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces'").fetchone():
+                candidates = conn.execute("SELECT workspace_id FROM workspaces WHERE task_unique_key=? AND status='ACTIVE'", (unique_key,)).fetchall()
+                if len(candidates) > 1:
+                    raise ReconciliationRequiredError("Ambiguous workspace dispatch.")
+                if candidates:
+                    workspace_id = candidates[0]["workspace_id"]
+                    if existing_lease is not None or conn.execute("SELECT 1 FROM workspace_dispatch WHERE workspace_id=?", (workspace_id,)).fetchone():
+                        raise ReconciliationRequiredError("Previously dispatched workspace requires reconciliation.")
 
             lease_ttl = ttl_seconds if ttl_seconds is not None else spec.budget.lease_seconds
             expires_iso = _format_utc(now_dt + timedelta(seconds=lease_ttl))
@@ -900,6 +1047,8 @@ class ExecutionAuthority:
                 """,
                 (unique_key, execution_id, worker_id, new_epoch, now_iso, now_iso, expires_iso),
             )
+            if workspace_id is not None:
+                conn.execute("INSERT INTO workspace_dispatch(workspace_id, execution_id, epoch, worker_id) VALUES (?, ?, ?, ?)", (workspace_id, execution_id, new_epoch, worker_id))
             self._append_event_and_outbox(
                 conn,
                 event_type="LEASE_ACQUIRED",
@@ -976,6 +1125,7 @@ class ExecutionAuthority:
         operation_id: str = "op-0",
         target_path: str | None = None,
         approval_ref: str = "local-policy",
+        broker_capability: object | None = None,
     ) -> ToolIntentSubmission:
         """Persist ToolIntent deterministically; enforce max_steps, deadline, and tool-independent idempotency."""
         now_dt = self.clock.now_utc()
@@ -999,6 +1149,9 @@ class ExecutionAuthority:
                 epoch=epoch,
                 now_dt=now_dt,
             )
+
+            if tool == "sandbox.python" and broker_capability is not self._broker_capability:
+                raise PolicyDeniedError("Native execution requires broker authorization.")
 
             args_hash = canonical_json_hash(args)
             # M1.4: Idempotency key excludes `tool` so changing tool on same operation_id cannot bypass idempotency!
@@ -1042,8 +1195,16 @@ class ExecutionAuthority:
                     disposition=disposition,
                 )
 
+            if tool == "sandbox.python":
+                occupied = conn.execute(
+                    "SELECT COUNT(*) FROM effects WHERE tool = ? AND outcome IN ('PENDING', 'UNKNOWN')", (tool,)
+                ).fetchone()[0]
+                if occupied >= 2:
+                    raise BudgetExceededError("Both native worker slots are reserved.")
+
             current_steps = int(task_row["step_count"]) if "step_count" in task_row.keys() else 0
-            if spec.budget.max_steps <= 0 or current_steps >= spec.budget.max_steps:
+            reserved = self._reserved_child_steps(conn, spec)
+            if current_steps + reserved >= spec.budget.max_steps:
                 raise BudgetExceededError(
                     f"Step budget exhausted for '{unique_key}': {current_steps} >= {spec.budget.max_steps}."
                 )
@@ -1111,6 +1272,7 @@ class ExecutionAuthority:
         worker_id: str,
         epoch: int,
         execution_id: str | None = None,
+        broker_capability: object | None = None,
         before_commit_hook: Callable[[sqlite3.Connection], None] | None = None,
     ) -> TaskRecord:
         """Atomically record EffectReceipt and (when UNKNOWN) transition to NEEDS_RECONCILIATION."""
@@ -1141,6 +1303,8 @@ class ExecutionAuthority:
             ).fetchone()
             if eff_row is None:
                 raise TaskNotFoundError(f"Effect intent '{receipt.intent_id}' does not exist.")
+            if eff_row["tool"] == "sandbox.python" and broker_capability is not self._broker_capability:
+                raise PolicyDeniedError("Only the native broker can settle its effects.")
             if eff_row["task_unique_key"] != unique_key:
                 raise TaskConflictError(
                     f"Effect '{receipt.intent_id}' belongs to '{eff_row['task_unique_key']}', not '{unique_key}'."
@@ -1176,6 +1340,18 @@ class ExecutionAuthority:
                 raise DatabaseIntegrityError(
                     f"Failed to update effect '{receipt.intent_id}' atomically (rowcount={cursor.rowcount})."
                 )
+
+            if eff_row["tool"] == "sandbox.python":
+                from opencognitiveos.verification.seals import seal
+                gate = self.evidence_completion
+                if gate is None:
+                    raise VerificationFailedError("Missing native broker signing context.")
+                conn.execute("""CREATE TABLE IF NOT EXISTS broker_seals (
+                    intent TEXT PRIMARY KEY REFERENCES effects(intent_id), tag TEXT NOT NULL)""")
+                digest = canonical_json_hash([unique_key, execution_id, epoch, receipt.intent_id,
+                    eff_row["args_hash"], eff_row["approval_ref"], receipt.outcome.value, receipt.external_ref, receipt.evidence_hash])
+                conn.execute("INSERT INTO broker_seals VALUES (?,?)",
+                             (receipt.intent_id, seal(gate.verifier_key, "effect", digest)))
 
             self._append_event_and_outbox(
                 conn,
@@ -1263,6 +1439,8 @@ class ExecutionAuthority:
             eff_row = conn.execute("SELECT * FROM effects WHERE intent_id = ?;", (intent_id,)).fetchone()
             if eff_row is None or eff_row["task_unique_key"] != unique_key:
                 raise TaskNotFoundError(f"Effect '{intent_id}' not found on task '{unique_key}'.")
+            if eff_row["tool"] == "sandbox.python":
+                raise PolicyDeniedError("Native execution needs independently verified quiescence.")
             if eff_row["outcome"] not in {EffectOutcome.PENDING.value, EffectOutcome.UNKNOWN.value}:
                 raise InvalidTransitionError(f"Effect '{intent_id}' is already settled ({eff_row['outcome']}).")
 
@@ -1412,7 +1590,7 @@ class ExecutionAuthority:
             unique_key,
             TaskStatus.CANCELLED,
             expected_revision=expected_revision,
-            actor_role="controller",
+            actor_role="controller", controller_capability=self._controller_capability,
             error_message=reason,
         )
 
@@ -1527,7 +1705,7 @@ class ExecutionAuthority:
                         task.unique_key,
                         TaskStatus.FAILED,
                         expected_revision=task.revision,
-                        actor_role="controller",
+                        actor_role="controller", controller_capability=self._controller_capability,
                         error_message="RETRY_WAIT task had unresolved PENDING/UNKNOWN effects on restart.",
                     )
                     failed_budget_exhausted.append(task.unique_key)
@@ -1578,7 +1756,7 @@ class ExecutionAuthority:
                         task.unique_key,
                         TaskStatus.FAILED,
                         expected_revision=task.revision,
-                        actor_role="controller",
+                        actor_role="controller", controller_capability=self._controller_capability,
                         error_message="RETRY_WAIT budget exhausted on restart.",
                     )
                     failed_budget_exhausted.append(task.unique_key)
@@ -1598,7 +1776,7 @@ class ExecutionAuthority:
                         task.unique_key,
                         TaskStatus.FAILED,
                         expected_revision=task.revision,
-                        actor_role="controller",
+                        actor_role="controller", controller_capability=self._controller_capability,
                         error_message="Lease expired on restart and retry budget exhausted.",
                     )
                     failed_budget_exhausted.append(task.unique_key)

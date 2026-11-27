@@ -48,6 +48,16 @@ jobs:
           python -I -m opencognitiveos --version
           python -I -c "import sysconfig, pathlib, subprocess, os, importlib.metadata as m, opencognitiveos as p; root=pathlib.Path(sysconfig.get_path('purelib')).resolve(); assert pathlib.Path(p.__file__).resolve().is_relative_to(root), p.__file__; assert m.version('opencognitiveos') == '0.1.6.dev1'; exe=pathlib.Path(sysconfig.get_path('scripts')) / ('opencognitiveos.exe' if os.name == 'nt' else 'opencognitiveos'); print(p.__file__, exe, flush=True); subprocess.run([str(exe), '--version'], check=True)"
 
+      - name: Verify official Google SDK request against a loopback-only fixture
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m pip download --no-deps --only-binary=:all: -d "$RUNNER_TEMP" 'google-genai==3.6.1'
+          wheel="$RUNNER_TEMP/google_genai-3.6.1-py3-none-any.whl"
+          echo "4b35064da644f61d7e5f6c0e9406bf63b945e7e96b4af18cadb3371cbc3acf74  $wheel" | sha256sum --check
+          python -m pip install "$wheel"
+          python tools/probe_google_sdk.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -56,3 +66,119 @@ jobs:
             acceptance.log
             wheel.log
           retention-days: 7
+
+  linux-isolation-primitives:
+    outputs:
+      snapshot: ${{ steps.native.outputs.snapshot }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify kernel-enforced cgroup and bubblewrap controls
+        run: bash tools/verify_linux_isolation.sh
+
+      - name: Verify the sealed receipt with a real isolated candidate-file check
+        env:
+          OCOS_NATIVE_SEALED_TEST: "1"
+          PYTHONPATH: src:tests
+        run: python3 -m unittest -v test_m2_s26_s28_s29_s30.TestM2S26S28S29S30Security.test_sealed_completion_rolls_back_and_replays
+
+      - name: Exercise the leased Python broker and cgroup timeout
+        id: native
+        env:
+          OCOS_CI_FIXTURE_BACKUP: ${{ runner.temp }}/ocos-public-fixture
+          PYTHONPATH: src
+        run: python3 tools/test_native_worker.py -v
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-native-recovery-fixture
+          path: ${{ runner.temp }}/ocos-public-fixture
+          if-no-files-found: error
+          retention-days: 1
+
+  restore-native-evidence:
+    needs: linux-isolation-primitives
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: public-native-recovery-fixture
+          path: ${{ runner.temp }}/source
+      - name: Restore Linux evidence on a fresh macOS host and replay the original receipt
+        env:
+          PYTHONPATH: src
+          SNAPSHOT_SHA: ${{ needs.linux-isolation-primitives.outputs.snapshot }}
+        run: python tools/soak_restore.py "$RUNNER_TEMP/source" "$SNAPSHOT_SHA" --seconds 8 --interval 2
+
+  provider-handshake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [hermes, opencode, pi, codex]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: bash tools/probe_provider.sh "${{ matrix.provider }}"
+
+  mlx-native:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'mlx-lm==0.32.2'
+      - run: python tools/probe_mlx.py
+      - name: Exercise local HTTP inference and settle the controller reservation
+        env:
+          PYTHONPATH: src
+          HF_HUB_OFFLINE: '1'
+        run: python tools/probe_mlx_server.py
+
+  omlx-hardware-probe:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'mlx==0.32.5'
+      - name: Record actual Metal availability on this standard runner
+        id: metal
+        run: |
+          python - <<'PY'
+          import mlx.core as mx, os
+          available = mx.metal.is_available()
+          print("Metal available:", available)
+          if not available:
+              print("::notice::oMLX native inference acceptance pending: this runner has no Metal device.")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print("available=" + str(available).lower(), file=f)
+          PY
+      - name: Install pinned upstream and exercise its local HTTP service
+        if: steps.metal.outputs.available == 'true'
+        env:
+          PYTHONPATH: src
+          HF_HUB_OFFLINE: '1'
+        run: |
+          python -m pip install 'omlx @ git+https://github.com/jundot/omlx@bc55984ab090682c2ea90876f5e64afe5cfd67a4'
+          python tools/probe_mlx_server.py --omlx

@@ -1,0 +1,146 @@
+"""Exercise local HTTP inference with the real MLX-LM server and small synthetic weights."""
+from dataclasses import asdict, replace
+import hashlib
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+import mlx.core as mx
+from mlx.utils import tree_flatten
+from mlx_lm.models.llama import Model, ModelArgs
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
+from transformers import PreTrainedTokenizerFast
+
+from opencognitiveos.contracts.models import Budget, TaskSpec, TaskStatus
+from opencognitiveos.kernel.authority import ExecutionAuthority
+from opencognitiveos.kernel.inference import InferenceCoordinator
+from opencognitiveos.providers.mlx_http import LocalModelServer
+from opencognitiveos.storage.sqlite_store import SQLiteStore
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp).resolve()
+    model_dir = root / "models" / "model"
+    model_dir.mkdir(parents=True)
+    mx.set_default_device(mx.cpu)
+    mx.random.seed(41)
+    args = ModelArgs(model_type="llama", hidden_size=32, num_hidden_layers=1, intermediate_size=64,
+                     num_attention_heads=4, num_key_value_heads=2, rms_norm_eps=1e-5, vocab_size=32)
+    model = Model(args)
+    config = {k: v for k, v in asdict(args).items() if v is not None}
+    config.update(max_position_embeddings=128, bos_token_id=1, eos_token_id=2)
+    (model_dir / "config.json").write_text(json.dumps(config))
+    mx.save_safetensors(str(model_dir / "model.safetensors"), dict(tree_flatten(model.parameters())), metadata={"format":"mlx"})
+    vocab = {"<unk>": 0, "<s>": 1, "</s>": 2, **{str(n): n for n in range(3, 32)}}
+    raw_tokenizer = Tokenizer(WordLevel(vocab, unk_token="<unk>"))
+    raw_tokenizer.pre_tokenizer = Whitespace()
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=raw_tokenizer, unk_token="<unk>", bos_token="<s>", eos_token="</s>")
+    tokenizer.chat_template = "{{ bos_token }}{% for message in messages %}{{ message['content'] }} {% endfor %}"
+    tokenizer.save_pretrained(str(model_dir))
+    cache = root / "hub"
+    cache.mkdir()
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    argv = [sys.executable, "-c",
+        "import mlx.core as mx; mx.set_default_device(mx.cpu); from mlx_lm.server import main; main()",
+        "--model", str(model_dir), "--host", "127.0.0.1", "--port", str(port)]
+    model_id = str(model_dir)
+    if "--omlx" in sys.argv:
+        argv = [sys.executable, "-c", "from omlx.cli import main; main()", "serve", "--model-dir",
+                str(model_dir.parent), "--host", "127.0.0.1", "--port", str(port), "--base-path",
+                str(root / "omlx"), "--headless"]
+        model_id = model_dir.name
+    proc = subprocess.Popen(argv,
+        env={**os.environ, "HF_HUB_OFFLINE":"1", "HF_HUB_CACHE":str(cache)})
+    try:
+        def count_prompt(model, revision, prompt):
+            if model != model_id or revision != "fixture-v1":
+                raise ValueError("Unknown model or tokenizer revision")
+            template = tokenizer.apply_chat_template([{"role": "user", "content": prompt}],
+                            tokenize=False, add_generation_prompt=True)
+            return len(tokenizer.encode(template, add_special_tokens=False))
+
+        server = LocalModelServer("127.0.0.1", port, count_prompt_tokens=count_prompt)
+        for _ in range(60):
+            if proc.poll() is not None:
+                raise RuntimeError("MLX server exited during startup")
+            try:
+                if model_id in server.models():
+                    break
+            except OSError:
+                pass
+            time.sleep(1)
+        else:
+            raise RuntimeError("MLX model unavailable")
+        store = SQLiteStore(root / "tasks.db")
+        store.migrate()
+        auth = ExecutionAuthority(store)
+        task = TaskSpec("fixture", "local", "infer", "3 4", "fixture", allowed_providers=("mlx-local",))
+        rec, _ = auth.submit_task(task)
+        control = object()
+        coordinator = InferenceCoordinator(auth, controller_capability=control)
+        coordinator.allocate(task.unique_key, model_id, "fixture-v1", "fixture-policy", 64, capability=control)
+        for status in (TaskStatus.PLANNED, TaskStatus.READY):
+            rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision, actor_role="controller", controller_capability=auth._controller_capability)
+        lease = auth.acquire_lease(task.unique_key, "local")
+        fence = dict(worker_id="local", execution_id=lease.execution_id, epoch=lease.fencing_epoch)
+        auth.transition_task(task.unique_key, TaskStatus.RUNNING, expected_revision=rec.revision, **fence)
+        out = server.complete(coordinator, task.unique_key, supervisor=control, request_id="1",
+                              prompt=task.goal, input_token_limit=16, output_token_limit=2, **fence)
+        with store.open_connection() as conn:
+            row = conn.execute("SELECT state,used FROM inference_calls").fetchone()
+        assert row["state"] == "CLOSED" and 0 < row["used"] <= 18
+        print("MLX HTTP completion; settled tokens", row["used"], "output characters", len(out))
+        from opencognitiveos.kernel.messages import TaskMessages
+        bus = TaskMessages(auth, controller_capability=control)
+        participants = []
+        for role in ("author", "reviewer"):
+            child = replace(task, task_id=role, parent_id=task.task_id, budget=Budget(max_steps=2, max_retries=0))
+            current, _ = auth.submit_task(child)
+            for status in (TaskStatus.PLANNED, TaskStatus.READY):
+                current = auth.transition_task(child.unique_key, status, expected_revision=current.revision,
+                                actor_role="controller", controller_capability=auth._controller_capability)
+            child_lease = auth.acquire_lease(child.unique_key, role)
+            child_fence = dict(worker_id=role, execution_id=child_lease.execution_id, epoch=child_lease.fencing_epoch)
+            auth.transition_task(child.unique_key, TaskStatus.RUNNING, expected_revision=current.revision, **child_fence)
+            participants.append((child.unique_key, child_fence))
+        (author, first), (reviewer, second) = participants
+        version = bus.replace_routes(task.unique_key, 0, [(author, reviewer)], capability=control)
+        proposal = server.complete(coordinator, author, supervisor=control, request_id="author",
+                        prompt="5 6", input_token_limit=12, output_token_limit=2, **first)
+        # Encode empty model text explicitly so even an empty proposal has an auditable rejection/review path.
+        envelope = json.dumps({"proposal":proposal}, separators=(",",":"))
+        mid = bus.publish(root=task.unique_key, version=version, sender=author, recipient=reviewer,
+                          kind="proposal", body=envelope, sequence=1, **first)
+        restarted = TaskMessages(ExecutionAuthority(store), controller_capability=control)
+        inbox = restarted.inbox(root=task.unique_key, recipient=reviewer, **second)
+        assert len(inbox) == 1 and inbox[0]["digest"] == mid
+        received = json.loads(inbox[0]["body"])["proposal"]
+        review_prompt = "7 " + received
+        reviewed = server.complete(coordinator, reviewer, supervisor=control, request_id="review",
+                        prompt=review_prompt, input_token_limit=16, output_token_limit=2, **second)
+        restarted.acknowledge(root=task.unique_key, recipient=reviewer, source_worker_task=author,
+                              source_execution=first["execution_id"], sequence=1, digest=mid, **second)
+        assert not restarted.inbox(root=task.unique_key, recipient=reviewer, **second)
+        with store.open_connection() as conn:
+            traces = conn.execute("""SELECT input_sha256,output_sha256 FROM inference_traces
+                      JOIN inference_calls USING(reservation) WHERE state='CLOSED'""").fetchall()
+            assert conn.execute("SELECT SUM(used) FROM inference_calls").fetchone()[0] <= 64
+        assert len(traces) == 3 and (hashlib.sha256(review_prompt.encode()).hexdigest(),
+                hashlib.sha256(reviewed.encode()).hexdigest()) in [tuple(row) for row in traces]
+        print("Two real model-backed sibling turns; message persisted, replayed, acknowledged; three usage traces.")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()

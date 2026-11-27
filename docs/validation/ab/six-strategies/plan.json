@@ -1,0 +1,61 @@
+{
+  "model": "SmolLM2-135M-Instruct-Q4_K_M@2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d",
+  "runtime": "llama.cpp b12810 Ubuntu x64 sha256:63b94be37dcc34cb4933554d4f998e9649841b23da7ffc71d1f66d63762464d7",
+  "temperature": 0.7,
+  "tasks": [
+    "51 + 40",
+    "53 - 40",
+    "47 * 19",
+    "15 + 12",
+    "35 - 11",
+    "54 * 13",
+    "33 + 26",
+    "53 - 43",
+    "47 * 41",
+    "56 + 17",
+    "39 - 33",
+    "38 * 16",
+    "49 + 44",
+    "26 - 17",
+    "44 * 20",
+    "34 + 22",
+    "35 - 32",
+    "50 * 27",
+    "36 + 33",
+    "38 - 33",
+    "27 * 20",
+    "38 + 12",
+    "41 - 13",
+    "42 * 34",
+    "28 + 22",
+    "37 - 26",
+    "47 * 12",
+    "25 + 12",
+    "30 - 24",
+    "39 * 30"
+  ],
+  "seeds": [
+    83,
+    137
+  ],
+  "arms": [
+    "single",
+    "long-thinking",
+    "independent",
+    "hierarchical",
+    "flat",
+    "dynamic"
+  ],
+  "modes": [
+    "tokens",
+    "wall_ms"
+  ],
+  "token_limit": 384,
+  "wall_limit_ms": 6000,
+  "secondary_token_limit": 480,
+  "secondary_wall_limit_ms": 12000,
+  "model_context": 512,
+  "cpu_threads": 4,
+  "slots": 1,
+  "protocol": "Exact integer scoring with the same constrained final decoder. Unconstrained intermediate notes at most 16 tokens. Rotate arm order per task and seed. Dynamic forks for disagreement; compare five arms with single. Independent safety audit absent; no release. Raw per-call output, wall time, predicted/prompt tokens and server eval time recorded. No KV occupancy estimate substitutes for actual hardware metrics."
+}
