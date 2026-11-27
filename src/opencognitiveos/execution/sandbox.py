@@ -91,7 +91,7 @@ class SandboxExecutionResult:
     process_group_terminated: bool
     stdout: str
     stderr: str
-    pgid: int
+    pgid: int | None
     duration_seconds: float
     evidence_hash: str
 
@@ -362,7 +362,10 @@ class GovernedSandboxRunner:
     ) -> None:
         self.authority = authority
         self.workspace_manager = workspace_manager
-        self.backend = backend or select_sandbox_backend()
+        if (backend is None and platform.system() == "Linux" and authority.evidence_completion is not None):
+            self.backend = None  # Only the sealed single-file broker is eligible.
+        else:
+            self.backend = backend or select_sandbox_backend()
 
     def _authorize_lease(self, request: SandboxExecutionRequest) -> None:
         now_dt = self.authority.clock.now_utc()
@@ -397,5 +400,8 @@ class GovernedSandboxRunner:
         if manager.authorize_workspace(request.workspace_id, **args) != identity:
             raise SandboxPolicyError("Workspace identity changed during verification.")
         self._authorize_lease(request)
-        # Launch remains disabled until OS containment and termination evidence are validated.
+        if self.backend is None and request.command[:1] == ("sandbox.python",):
+            from opencognitiveos.execution.linux_python import execute_python
+            return execute_python(self, request)
+        # Other backends remain quarantined until native acceptance.
         raise SandboxUnavailableError("Execution gate quarantined pending OS acceptance.")

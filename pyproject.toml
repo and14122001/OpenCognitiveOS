@@ -17,4 +17,4 @@ opencognitiveos = "opencognitiveos.interfaces.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"opencognitiveos.execution" = ["verify_linux_isolation.sh"]
+"opencognitiveos.execution" = ["verify_linux_isolation.sh", "launch_python.sh"]

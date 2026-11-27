@@ -101,6 +101,7 @@ class ExecutionAuthority:
         policy_gate: PolicyGate | None = None,
         verifier: IndependentVerifier | None = None,
     ) -> None:
+        self._broker_capability = object()
         self.evidence_completion = None
         self.store = store
         self.clock: Clock = clock or store.clock or SystemClock()
@@ -796,7 +797,10 @@ class ExecutionAuthority:
                 if self.evidence_completion.manager.authority is not self:
                     raise VerificationFailedError("Wrong workspace authority.")
                 binding = self.evidence_completion.verify(conn, spec, evidence_id, worker_id, execution_id, epoch)
-                output_payload = {**(output_payload or {}), "verified_evidence": binding}
+                if "worker_log" in binding:
+                    output_payload = {"output_hash": binding["worker_log"], "verified_evidence": binding}
+                else:
+                    output_payload = {**(output_payload or {}), "verified_evidence": binding}
 
             v_receipt = self.verifier.verify(
                 spec,
@@ -1225,6 +1229,7 @@ class ExecutionAuthority:
         worker_id: str,
         epoch: int,
         execution_id: str | None = None,
+        broker_capability: object | None = None,
         before_commit_hook: Callable[[sqlite3.Connection], None] | None = None,
     ) -> TaskRecord:
         """Atomically record EffectReceipt and (when UNKNOWN) transition to NEEDS_RECONCILIATION."""
@@ -1255,6 +1260,8 @@ class ExecutionAuthority:
             ).fetchone()
             if eff_row is None:
                 raise TaskNotFoundError(f"Effect intent '{receipt.intent_id}' does not exist.")
+            if eff_row["tool"] == "sandbox.python" and broker_capability is not self._broker_capability:
+                raise PolicyDeniedError("Only the native broker can settle its effects.")
             if eff_row["task_unique_key"] != unique_key:
                 raise TaskConflictError(
                     f"Effect '{receipt.intent_id}' belongs to '{eff_row['task_unique_key']}', not '{unique_key}'."
@@ -1290,6 +1297,18 @@ class ExecutionAuthority:
                 raise DatabaseIntegrityError(
                     f"Failed to update effect '{receipt.intent_id}' atomically (rowcount={cursor.rowcount})."
                 )
+
+            if eff_row["tool"] == "sandbox.python":
+                from opencognitiveos.verification.seals import seal
+                gate = self.evidence_completion
+                if gate is None:
+                    raise VerificationFailedError("Missing native broker signing context.")
+                conn.execute("""CREATE TABLE IF NOT EXISTS broker_seals (
+                    intent TEXT PRIMARY KEY REFERENCES effects(intent_id), tag TEXT NOT NULL)""")
+                digest = canonical_json_hash([unique_key, execution_id, epoch, receipt.intent_id,
+                    eff_row["args_hash"], eff_row["approval_ref"], receipt.outcome.value, receipt.evidence_hash])
+                conn.execute("INSERT INTO broker_seals VALUES (?,?)",
+                             (receipt.intent_id, seal(gate.verifier_key, "effect", digest)))
 
             self._append_event_and_outbox(
                 conn,

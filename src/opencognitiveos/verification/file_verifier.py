@@ -35,7 +35,7 @@ def verify_file(authority, *, task_key, workspace_id, worker_id, execution_id, e
     if not tag or not hmac.compare_digest(tag[0], seal(gate.controller_key, "spec", digest)):
         raise VerificationFailedError("Untrusted acceptance specification.")
     command = spec.criteria.get("command", "")
-    if (set(spec.criteria) != {"command", "min_pass"} or type(spec.criteria["min_pass"]) is not int
+    if (set(spec.criteria) not in ({"command", "min_pass"}, {"command", "min_pass", "worker_script"}) or type(spec.criteria["min_pass"]) is not int
             or spec.criteria["min_pass"] != 1 or not command.startswith("verify-file ")):
         raise VerificationFailedError("Unsupported native acceptance criteria.")
     relative = command.removeprefix("verify-file ")
@@ -76,9 +76,18 @@ def verify_file(authority, *, task_key, workspace_id, worker_id, execution_id, e
     record = ExecutionEnvironmentRecord.capture(repo_root=wt, sandbox_backend="linux-bwrap",
         sandbox_version=version, test_command=command, exit_code=0, passed_count=1, failed_count=0, skipped_count=0)
     log = gate.cas.store_bytes(report, kind=EvidenceKind.EXECUTION_LOG)
+    artifacts = {"test_log": log.digest}
+    if "worker_script" in spec.criteria:
+        with authority.store.open_connection() as conn:
+            rows = conn.execute("""SELECT evidence_hash FROM effects WHERE task_unique_key=? AND execution_id=?
+                AND epoch=? AND tool='sandbox.python' AND approval_ref=? AND outcome='SUCCEEDED'""",
+                (task_key,execution_id,epoch,digest)).fetchall()
+        if len(rows) != 1 or not gate.cas.verify_digest(rows[0][0]):
+            raise VerificationFailedError("Missing successful worker evidence.")
+        artifacts["worker_log"] = rows[0][0]
     verifier = object()
     manifests = EvidenceManifestRegistry(authority=authority, acceptance_registry=registry,
         evidence_store=gate.cas, verifier_capability=verifier, signing_key=gate.verifier_key)
     return manifests.create_and_persist_manifest(task_spec=task, execution_id=execution_id, worker_id=worker_id,
         fencing_epoch=epoch, workspace_id=workspace_id, git_state=git, environment=record,
-        artifact_hashes={"test_log": log.digest}, verifier_id=spec.verifier_id, capability=verifier)
+        artifact_hashes=artifacts, verifier_id=spec.verifier_id, capability=verifier)

@@ -31,10 +31,15 @@ def build_parser() -> argparse.ArgumentParser:
     replay = sub.add_parser("replay-evidence", help="Replay the sealed receipt and referenced CAS evidence.")
     complete = sub.add_parser("complete-evidence", help="Atomically verify and commit a governed task.")
     verify_file = sub.add_parser("verify-file", help="Check the registered Git blob in a native Linux sandbox.")
-    verify_file.add_argument("--workspace", required=True)
+    approved = sub.add_parser("run-approved-python", help="Run one explicitly approved, pinned script in Linux isolation.")
+    approved.add_argument("--script", required=True)
+    approved.add_argument("--timeout", type=float, default=30)
+    for command in (verify_file, approved):
+        command.add_argument("--workspace", required=True)
     for name, typ in (("worker", str), ("execution", str), ("epoch", int)):
-        verify_file.add_argument("--" + name, type=typ, required=True)
-    for command in (replay, complete, verify_file):
+        for command in (verify_file, approved):
+            command.add_argument("--" + name, type=typ, required=True)
+    for command in (replay, complete, verify_file, approved):
         command.add_argument("--config", required=True, help="Canonical path to operator-owned mode-0600 configuration.")
         command.add_argument("--unique-key", required=True)
     complete.add_argument("--worker", required=True)
@@ -134,9 +139,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     store.migrate()
     authority = ExecutionAuthority(store, clock=clock)
 
-    if args.command in ("complete-evidence", "replay-evidence", "verify-file"):
+    if args.command in ("complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
         from opencognitiveos.verification.bootstrap import configure_evidence
         configure_evidence(authority, args.config)
+        if args.command == "run-approved-python":
+            from opencognitiveos.execution.sandbox import GovernedSandboxRunner, SandboxExecutionRequest
+            manager = authority.evidence_completion.manager
+            identity = manager.load_identity(args.workspace)
+            runner = GovernedSandboxRunner(authority=authority, workspace_manager=manager)
+            result = runner.run(SandboxExecutionRequest(args.unique_key,args.execution,args.worker,args.epoch,
+                    Path(identity.worktree_path),("sandbox.python",args.script),timeout_seconds=args.timeout,
+                    workspace_id=args.workspace))
+            print(json.dumps({"exit_code":result.exit_code,"timed_out":result.timed_out,"log_digest":result.evidence_hash}))
+            return 0 if result.exit_code == 0 and not result.timed_out else 1
         if args.command == "verify-file":
             from opencognitiveos.verification.file_verifier import verify_file
             manifest = verify_file(authority, task_key=args.unique_key, workspace_id=args.workspace,

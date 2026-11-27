@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from opencognitiveos.contracts.models import canonical_json_hash
 from opencognitiveos.errors import VerificationFailedError
 from opencognitiveos.execution.worktree import WorkspaceIdentity, WorkspaceManager
 from opencognitiveos.verification.acceptance import AcceptanceSpec, _parse_utc
@@ -56,13 +57,25 @@ class EvidenceCompletion:
             require(self.cas.verify_digest(digest), "Missing CAS object.")
         env = json.loads(self.cas.read_bytes(manifest.environment_hash))
         criteria = spec.criteria
-        require(set(criteria) == {"command", "min_pass"} and type(criteria["min_pass"]) is int
+        require(set(criteria) in ({"command", "min_pass"}, {"command", "min_pass", "worker_script"}) and type(criteria["min_pass"]) is int
                 and criteria["min_pass"] > 0 and isinstance(criteria["command"], str) and criteria["command"]
                 and env["test_command"] == criteria["command"] and env["sandbox_backend"] == "linux-bwrap"
                 and type(env["passed_count"]) is int and env["passed_count"] >= criteria["min_pass"]
                 and all(type(env[k]) is int and env[k] == 0 for k in ("exit_code", "failed_count", "skipped_count")),
                 "Acceptance criteria failed or unsupported.")
         binding = {"manifest_id": evidence_id, "manifest_hash": mhash, "spec_hash": shash}
+        if "worker_script" in criteria:
+            log = artifacts.get("worker_log")
+            rows = conn.execute("""SELECT e.*,b.tag FROM effects e JOIN broker_seals b ON e.intent_id=b.intent
+                WHERE e.task_unique_key=? AND e.execution_id=? AND e.epoch=? AND e.approval_ref=?
+                AND e.tool='sandbox.python' AND e.outcome='SUCCEEDED' AND e.evidence_hash=?""",
+                (task.unique_key, execution_id, epoch, shash, log)).fetchall()
+            require(log and len(rows) == 1, "Missing uniquely attested native effect.")
+            effect = rows[0]
+            digest = canonical_json_hash([task.unique_key, execution_id, epoch, effect["intent_id"], effect["args_hash"],
+                                          shash, effect["outcome"], log])
+            require(hmac.compare_digest(effect["tag"], seal(self.verifier_key, "effect", digest)), "Invalid broker seal.")
+            binding["worker_log"] = log
         return spec, manifest, binding
 
     def replay(self, conn, task, binding, execution_id, epoch):
