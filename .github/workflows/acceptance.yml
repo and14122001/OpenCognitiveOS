@@ -58,6 +58,8 @@ jobs:
           retention-days: 7
 
   linux-isolation-primitives:
+    outputs:
+      snapshot: ${{ steps.native.outputs.snapshot }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -74,9 +76,39 @@ jobs:
         run: python3 -m unittest -v test_m2_s26_s28_s29_s30.TestM2S26S28S29S30Security.test_sealed_completion_rolls_back_and_replays
 
       - name: Exercise the leased Python broker and cgroup timeout
+        id: native
         env:
+          OCOS_CI_FIXTURE_BACKUP: ${{ runner.temp }}/ocos-public-fixture
           PYTHONPATH: src
         run: python3 tools/test_native_worker.py -v
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-native-recovery-fixture
+          path: ${{ runner.temp }}/ocos-public-fixture
+          if-no-files-found: error
+          retention-days: 1
+
+  restore-native-evidence:
+    needs: linux-isolation-primitives
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: public-native-recovery-fixture
+          path: ${{ runner.temp }}/source
+      - name: Restore Linux evidence on a fresh macOS host and replay the original receipt
+        env:
+          PYTHONPATH: src
+          SNAPSHOT_SHA: ${{ needs.linux-isolation-primitives.outputs.snapshot }}
+        run: python tools/restore_native_fixture.py "$RUNNER_TEMP/source" "$SNAPSHOT_SHA"
 
   provider-handshake:
     runs-on: ubuntu-latest

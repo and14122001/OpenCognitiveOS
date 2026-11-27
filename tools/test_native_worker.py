@@ -1,4 +1,5 @@
 """Hosted Linux checks for the production leased Python broker."""
+import os
 import secrets
 import subprocess
 import tempfile
@@ -35,9 +36,13 @@ class NativeWorker(unittest.TestCase):
             auth = ExecutionAuthority(store)
             mgr = WorkspaceManager(authority=auth, repo_path=repo, workspaces_root=root/"workspaces")
             cas = ContentAddressedEvidenceStore(root/"cas")
-            key, cap = secrets.token_bytes(32), object()
+            key, verifier_key, cap = secrets.token_bytes(32), secrets.token_bytes(32), object()
+            export_dir = os.environ.get("OCOS_CI_FIXTURE_BACKUP")
+            if export_dir:
+                from restore_native_fixture import public_fixture_keys
+                key, verifier_key = public_fixture_keys()
             policy = canonical_json_hash({"net":"deny"})
-            auth.evidence_completion = EvidenceCompletion(mgr,cas,key,secrets.token_bytes(32),policy)
+            auth.evidence_completion = EvidenceCompletion(mgr,cas,key,verifier_key,policy)
             reg = AcceptanceSpecRegistry(auth,controller_capability=cap,signing_key=key)
             spec = TaskSpec("p","r","t","test",canonical_json_hash({"goal":"test"}),base_sha=sha,
                             allowed_tools=("sandbox.python",),allowed_paths=("script.py",))
@@ -82,6 +87,11 @@ class NativeWorker(unittest.TestCase):
                     stage("0" * 40, proposals)
                 with self.assertRaises(PolicyDeniedError):
                     stage(sha, proposals * 2)
+                if export_dir:
+                    from opencognitiveos.storage.evidence_backup import export_snapshot
+                    snapshot = export_snapshot(store, cas, export_dir)
+                    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as sink:
+                        print("snapshot=" + snapshot, file=sink)
                 print("Native sandbox.python -> signed manifest -> atomic SUCCEEDED -> replay OK", flush=True)
             return result
 
