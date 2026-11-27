@@ -55,8 +55,9 @@ fi
     tar -xzf "$stage/llama.tar.gz" --strip-components=1 -C "$stage/model-runtime"
     curl --fail --location --retry 2 -o "$stage/model.gguf" https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/09816acd5d99df7be770d85ea30822623dab342c/SmolLM2-135M-Instruct-Q4_K_M.gguf
     echo "2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d  $stage/model.gguf" | sha256sum --check
+    cp tools/local_agent_model.py "$stage/local_agent_model.py"
     args+=(--ro-bind "$stage/model-runtime" /model-runtime --ro-bind "$stage/model.gguf" /model-fixture.gguf
-           --ro-bind "$PWD/tools/local_agent_model.py" /local_agent_model.py)
+           --ro-bind "$stage/local_agent_model.py" /local_agent_model.py)
 }
 if [[ "$provider" == pi ]]; then
     argv+=(--model local-fixture/ocos-fixture --no-tools --no-session --no-extensions --system-prompt "Answer arithmetic briefly.")

@@ -42,7 +42,7 @@ class LocalModelServer:
         # exchange leaves the reservation active until it confirms remote inference stopped.
         coordinator.authorize_supervisor(supervisor)
         rid, snapshot = coordinator.begin(task, worker_id=worker_id, execution_id=execution_id, epoch=epoch,
-                                         request_id=request_id, max_tokens=input_token_limit + output_token_limit)
+                                         request_id=request_id, max_tokens=input_token_limit + output_token_limit, provider="mlx-local")
         model = snapshot["model_id"]
         try:
             bound = self._count_prompt_tokens(model, snapshot["tokenizer_version"], prompt) if self._count_prompt_tokens else None

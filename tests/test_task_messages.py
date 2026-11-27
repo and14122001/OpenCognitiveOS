@@ -40,6 +40,8 @@ class RoutingTests(unittest.TestCase):
             lab = EvolutionLab(store, controller_capability=control)
             lab.initialize({"model":"local-fixture","tokenizer":"v1","strategy":"single"}, capability=control)
             slots.allocate_current(root.unique_key, "policy", 10, capability=control)
+            with self.assertRaises(PolicyDeniedError):
+                slots.begin(a, request_id="outside-provider-grant", max_tokens=1, provider="mlx-local", **sender)
             rid, snap = slots.begin(a, request_id="first", max_tokens=7, **sender)
             self.assertEqual(snap["task_key"], a)
             self.assertEqual(snap["release_generation"], 1)

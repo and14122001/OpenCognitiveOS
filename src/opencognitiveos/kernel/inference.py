@@ -58,7 +58,7 @@ class InferenceCoordinator:
                 (task,tokens,cfg["model"],cfg["tokenizer"],policy_hash))
             conn.execute("INSERT INTO inference_releases VALUES (?,?,?)",(task,row["generation"],row["config_hash"]))
 
-    def begin(self, task, *, worker_id, execution_id, epoch, request_id, max_tokens):
+    def begin(self, task, *, worker_id, execution_id, epoch, request_id, max_tokens, provider=None):
         if not request_id or type(max_tokens) is not int or max_tokens <= 0:
             raise PolicyDeniedError("Invalid inference reservation.")
         with self.auth.store.transaction() as conn:
@@ -67,6 +67,9 @@ class InferenceCoordinator:
                 raise PolicyDeniedError("Inactive inference task.")
             self.auth._validate_active_lease(conn, unique_key=task, current_epoch=row["fencing_epoch"],
                     worker_id=worker_id, execution_id=execution_id, epoch=epoch, now_dt=self.auth.clock.now_utc())
+            spec = self.auth._spec_from_row(row)
+            if provider is not None and provider not in spec.allowed_providers:
+                raise PolicyDeniedError("Local provider is outside the task grant.")
             root = row
             while root["parent_id"] is not None:
                 root = conn.execute("SELECT * FROM tasks WHERE repo_id=? AND project_id=? AND task_id=?",
@@ -89,13 +92,14 @@ class InferenceCoordinator:
                                  (root["unique_key"],)).fetchone()[0]
             if spent + max_tokens > allocation["token_limit"]:
                 raise BudgetExceededError("Shared token budget exhausted.")
-            spec = self.auth._spec_from_row(row)
             # Only controller-derived provenance enters the handoff; no arbitrary context or credential values.
             snapshot = dict(task_key=task, root=root["unique_key"], execution_id=execution_id, epoch=epoch,
                             base_sha=spec.base_sha, acceptance_hash=spec.acceptance_hash,
                             policy_hash=allocation["policy_hash"], model_id=allocation["model"],
                             tokenizer_version=allocation["tokenizer"], budget_reservation_id=rid,
                             max_tokens=max_tokens, data_class=spec.data_class.value)
+            if provider is not None:
+                snapshot["provider"] = provider
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_attachments'").fetchone():
                 media = []
                 for item in conn.execute("SELECT * FROM local_attachments WHERE task=? ORDER BY id", (task,)):
