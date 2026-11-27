@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opencognitiveos"
+version = "0.1.6.dev1"
+description = "OpenCognitiveOS deterministic cognitive execution kernel (M0-M1.6 offline baseline)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+opencognitiveos = "opencognitiveos.interfaces.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

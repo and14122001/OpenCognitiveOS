@@ -1,0 +1,170 @@
+"""CLI for OpenCognitiveOS M0-M1.6 offline kernel."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Sequence
+
+from opencognitiveos import __version__
+from opencognitiveos.contracts.models import EffectOutcome, SystemClock, TaskSpec, TaskStatus, canonical_json_hash
+from opencognitiveos.execution.runner import OfflineRunner
+from opencognitiveos.kernel.authority import ExecutionAuthority
+from opencognitiveos.providers.mock_provider import MockProvider
+from opencognitiveos.storage.sqlite_store import SQLiteStore
+from opencognitiveos.verification.verifier import IndependentVerifier
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="opencognitiveos", description="OpenCognitiveOS M0-M1.6 CLI")
+    parser.add_argument("--version", action="version", version=f"opencognitiveos {__version__}")
+    parser.add_argument("--db", required=True, help="Path to SQLite database file.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("init-db", help="Run SQLite migrations and integrity check.")
+    sub.add_parser("integrity-check", help="Run SQLite integrity_check and foreign_key_check.")
+    p_audit = sub.add_parser("audit-consistency", help="Audit cross-table DB consistency for a task.")
+    p_audit.add_argument("--unique-key", required=True)
+
+    p_run = sub.add_parser("run-mock", help="Submit and run a task offline using MockProvider.")
+    p_run.add_argument("--project-id", default="default-project")
+    p_run.add_argument("--repo-id", required=True)
+    p_run.add_argument("--task-id", required=True)
+    p_run.add_argument("--goal", required=True)
+    p_run.add_argument("--simulate-lost-response", action="store_true")
+
+    p_status = sub.add_parser("status", help="Inspect persisted task status.")
+    p_status.add_argument("--unique-key", required=True, help="Task key in repo_id::task_id format.")
+
+    p_cancel = sub.add_parser("cancel", help="Cancel a non-terminal task.")
+    p_cancel.add_argument("--unique-key", required=True)
+    p_cancel.add_argument("--reason", default="Cancelled via CLI")
+
+    sub.add_parser("recover", help="Run restart recovery scan on persisted SQLite state.")
+
+    p_backup = sub.add_parser("backup", help="Create consistent SQLite backup.")
+    p_backup.add_argument("--dest", required=True)
+
+    p_reconcile = sub.add_parser("reconcile", help="Reconcile a task in NEEDS_RECONCILIATION.")
+    p_reconcile.add_argument("--unique-key", required=True)
+    p_reconcile.add_argument("--intent-id", required=True)
+    p_reconcile.add_argument("--outcome", choices=["SUCCEEDED", "FAILED"], required=True)
+    p_reconcile.add_argument("--external-ref", default="reconciled-manual")
+
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    clock = SystemClock()
+    store = SQLiteStore(Path(args.db), clock=clock)
+
+    if args.command == "init-db":
+        applied = store.migrate()
+        integrity = store.integrity_check()
+        print(
+            json.dumps(
+                {"applied_migrations": applied, "schema_version": store.schema_version(), "integrity": integrity},
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if args.command == "integrity-check":
+        print(json.dumps(store.integrity_check(), ensure_ascii=False))
+        return 0
+
+    store.migrate()
+    authority = ExecutionAuthority(store, clock=clock)
+
+    if args.command == "run-mock":
+        spec = TaskSpec(
+            project_id=args.project_id,
+            repo_id=args.repo_id,
+            task_id=args.task_id,
+            goal=args.goal,
+            acceptance_hash=canonical_json_hash({"goal": args.goal}),
+        )
+        runner = OfflineRunner(authority, MockProvider(), authority.verifier)
+        record = runner.run_task(spec, simulate_lost_response=args.simulate_lost_response)
+        print(
+            json.dumps(
+                {
+                    "unique_key": record.unique_key,
+                    "status": record.status.value,
+                    "revision": record.revision,
+                    "fencing_epoch": record.fencing_epoch,
+                    "result": record.result,
+                    "error_message": record.error_message,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if args.command == "audit-consistency":
+        print(json.dumps(authority.audit_database_consistency(args.unique_key), ensure_ascii=False))
+        return 0
+
+    if args.command == "status":
+        record = authority.get_task(args.unique_key)
+        print(
+            json.dumps(
+                {
+                    "unique_key": record.unique_key,
+                    "status": record.status.value,
+                    "revision": record.revision,
+                    "fencing_epoch": record.fencing_epoch,
+                    "retry_count": record.retry_count,
+                    "result": record.result,
+                    "error_message": record.error_message,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if args.command == "cancel":
+        record = authority.get_task(args.unique_key)
+        updated = authority.cancel_task(args.unique_key, expected_revision=record.revision, reason=args.reason)
+        print(
+            json.dumps(
+                {"unique_key": updated.unique_key, "status": updated.status.value, "revision": updated.revision},
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if args.command == "recover":
+        print(json.dumps(authority.recover_on_restart(), ensure_ascii=False))
+        return 0
+
+    if args.command == "backup":
+        dest = store.backup_to(args.dest)
+        print(json.dumps({"backup_path": str(dest)}, ensure_ascii=False))
+        return 0
+
+    if args.command == "reconcile":
+        updated = authority.reconcile_effect(
+            args.unique_key,
+            intent_id=args.intent_id,
+            resolved_outcome=EffectOutcome(args.outcome),
+            external_ref=args.external_ref,
+            evidence_hash=canonical_json_hash({"intent_id": args.intent_id, "outcome": args.outcome}),
+        )
+        print(
+            json.dumps(
+                {"unique_key": updated.unique_key, "status": updated.status.value, "revision": updated.revision},
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
