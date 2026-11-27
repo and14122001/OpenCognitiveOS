@@ -55,6 +55,12 @@ class NativeWorker(unittest.TestCase):
             acceptance = AcceptanceSpec("p","r",spec.unique_key,sha,policy,"verifier",
                     {"command":"verify-python verify.py","min_pass":1,"worker_script":"script.py"},auth.clock.now_iso())
             reg.register_spec(acceptance,task_spec=spec,capability=cap)
+            from opencognitiveos.kernel.world import capture_world
+            captured, world = capture_world(auth, spec.unique_key, ["script.py"], capability=auth._controller_capability)
+            self.assertTrue(cas.verify_digest(captured))
+            self.assertEqual(world["base_sha"], sha)
+            with self.assertRaises(PolicyDeniedError):
+                capture_world(auth, spec.unique_key, ["verify.py"], capability=auth._controller_capability)
             for status in (TaskStatus.PLANNED,TaskStatus.READY):
                 rec = auth.transition_task(spec.unique_key,status,expected_revision=rec.revision,actor_role="controller", controller_capability=auth._controller_capability)
             ws = mgr.create_workspace(workspace_id="ws",repo_id="r",task_id="t",base_sha=sha)

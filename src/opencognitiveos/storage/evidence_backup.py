@@ -27,6 +27,8 @@ def _references(db, version):
                 for digest in json.loads(raw)["artifact_hashes"].values():
                     refs.add(ContentAddressedEvidenceStore.validate_digest(digest))
         if version == 2:
+            if "world_snapshots" in tables:
+                refs.update(row[0] for row in conn.execute("SELECT digest FROM world_snapshots"))
             if "local_attachments" in tables:
                 refs.update(row[0] for row in conn.execute("SELECT digest FROM local_attachments"))
             if "broker_seals" in tables:

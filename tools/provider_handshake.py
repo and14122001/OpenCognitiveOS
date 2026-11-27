@@ -34,6 +34,12 @@ async def main():
         if generated <= 0:
             raise RuntimeError("No generation on the isolated local server")
         print(adapter, "verified local model generated tokens:", generated, flush=True)
+    except Exception as exc:
+        remote = getattr(exc, "remote_error", None)
+        if remote is not None:
+            print("Public fixture ACP diagnostic:", str(remote)[:1200], flush=True)
+        print("Isolated model generated tokens before failure:", generated_tokens() - before, flush=True)
+        raise
     finally:
         if model is not None:
             model.terminate()

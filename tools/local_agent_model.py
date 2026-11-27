@@ -56,7 +56,7 @@ def configure_acp(adapter):
         settings = {"model":{"default":"ocos-fixture","provider":"custom:fixture","base_url":base},
             "providers":{"fixture":{"api":base,"api_key":"public-fixture","default_model":"ocos-fixture",
             "transport":"chat_completions","context_length":8192,"extra_body":{"max_tokens":32}}},
-            "platform_toolsets":{"acp":[]}, "agent":{"max_turns":1}}
+            "platform_toolsets":{"acp":[]}, "agent":{"max_turns":2, "reasoning_effort":"none"}}
         # JSON is a YAML 1.2 subset.
         (path/"config.yaml").write_text(json.dumps(settings))
 

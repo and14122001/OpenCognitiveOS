@@ -120,7 +120,9 @@ async def prompt_text(reader, writer, session_id, message, *, timeout=45):
                   and event.get("result", {}).get("stopReason") in ("end_turn", "max_tokens") and total):
                 return "".join(parts)
             else:
-                raise ACPProtocolError("ACP turn failed or reply is unrelated")
+                exc = ACPProtocolError("ACP turn failed or reply is unrelated")
+                exc.remote_error = event.get("error")
+                raise exc
         raise ACPProtocolError("ACP frame count exceeded")
 
     try:
