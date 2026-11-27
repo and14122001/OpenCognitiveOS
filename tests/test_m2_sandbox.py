@@ -63,8 +63,8 @@ class TestM2SandboxS22S25(unittest.TestCase):
             acceptance_hash=canonical_json_hash({"task": "t-sandbox"}),
         )
         rec, _ = self.auth.submit_task(spec)
-        rec = self.auth.transition_task(rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller")
-        rec = self.auth.transition_task(rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller")
+        rec = self.auth.transition_task(rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability)
+        rec = self.auth.transition_task(rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability)
         self.task_key = rec.unique_key
         self.lease = self.auth.acquire_lease(self.task_key, worker_id="worker-s22", ttl_seconds=60)
 

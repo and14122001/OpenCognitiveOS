@@ -76,10 +76,10 @@ class TestReconciliationAndCLIE2E(unittest.TestCase):
         )
         rec, _ = auth1.submit_task(spec)
         rec = auth1.transition_task(
-            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=auth1._controller_capability
         )
         rec = auth1.transition_task(
-            rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=auth1._controller_capability
         )
         lease = auth1.acquire_lease(rec.unique_key, worker_id="crashed-worker", ttl_seconds=30)
         auth1.transition_task(

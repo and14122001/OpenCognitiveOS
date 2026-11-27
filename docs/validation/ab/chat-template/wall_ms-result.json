@@ -1,0 +1,26 @@
+{
+  "plan_sha256": "cccd63ccd53e34b71727cfd99439765651396d60244abe96dabd6713014aea98",
+  "wins": 0,
+  "losses": 0,
+  "ties": 30,
+  "one_sided_sign_test_p": 1.0,
+  "unsafe_observations": 0,
+  "unassessed_observations": 120,
+  "peak_rss_bytes": {
+    "single": 169545728,
+    "independent": 169545728
+  },
+  "resource_totals": {
+    "single": {
+      "tokens": 3187,
+      "wall_ms": 9010,
+      "message_bytes": 0
+    },
+    "independent": {
+      "tokens": 9544,
+      "wall_ms": 24854,
+      "message_bytes": 0
+    }
+  },
+  "eligible_for_review": false
+}

@@ -72,8 +72,8 @@ class TestM2WorktreeS21S22Round2(unittest.TestCase):
             acceptance_hash=canonical_json_hash({"task_id": task_id}),
         )
         rec, _ = self.auth.submit_task(spec)
-        rec = self.auth.transition_task(rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller")
-        rec = self.auth.transition_task(rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller")
+        rec = self.auth.transition_task(rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability)
+        rec = self.auth.transition_task(rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability)
         if with_lease:
             self.auth.acquire_lease(rec.unique_key, worker_id=f"worker-{task_id}", ttl_seconds=60)
         return rec.unique_key

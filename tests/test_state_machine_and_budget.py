@@ -20,6 +20,7 @@ from opencognitiveos.errors import (
     CASConflictError,
     InvalidTransitionError,
     PolicyDeniedError,
+    VerificationFailedError,
 )
 from opencognitiveos.execution.runner import OfflineRunner
 from opencognitiveos.kernel.authority import ExecutionAuthority
@@ -52,15 +53,45 @@ class TestStateMachineBudgetAndPolicy(unittest.TestCase):
         rec, _ = self.auth.submit_task(spec)
         with self.assertRaises(InvalidTransitionError):
             self.auth.transition_task(
-                rec.unique_key, TaskStatus.SUCCEEDED, expected_revision=rec.revision, actor_role="controller"
+                rec.unique_key, TaskStatus.SUCCEEDED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
             )
 
         cancelled = self.auth.cancel_task(rec.unique_key, expected_revision=rec.revision)
         self.assertEqual(cancelled.status, TaskStatus.CANCELLED)
         with self.assertRaises(InvalidTransitionError):
             self.auth.transition_task(
-                cancelled.unique_key, TaskStatus.READY, expected_revision=cancelled.revision, actor_role="controller"
+                cancelled.unique_key, TaskStatus.READY, expected_revision=cancelled.revision, actor_role="controller", controller_capability=self.auth._controller_capability
             )
+
+    def test_native_reservations_and_controller_authority(self):
+        spec = TaskSpec("p", "r", "native", "test", canonical_json_hash({"goal":"native"}),
+                        allowed_tools=("sandbox.python",))
+        rec, _ = self.auth.submit_task(spec)
+        with self.assertRaises(PolicyDeniedError):
+            self.auth.transition_task(spec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision,
+                                      actor_role="controller")
+        for target in (TaskStatus.PLANNED, TaskStatus.READY):
+            rec = self.auth.transition_task(spec.unique_key, target, expected_revision=rec.revision,
+                         actor_role="controller", controller_capability=self.auth._controller_capability)
+        lease = self.auth.acquire_lease(spec.unique_key, "worker")
+        fence = dict(worker_id="worker", execution_id=lease.execution_id, epoch=lease.fencing_epoch)
+        self.auth.transition_task(spec.unique_key, TaskStatus.RUNNING, expected_revision=rec.revision, **fence)
+        def reserve(number, capability=None):
+            return self.auth.record_tool_intent(spec.unique_key, tool="sandbox.python", args={},
+                       operation_id=str(number), broker_capability=capability, **fence)
+        with self.assertRaises(PolicyDeniedError):
+            reserve(0)
+        cap = self.auth._broker_capability
+        first = reserve(1, cap)
+        reserve(2, cap)
+        self.assertFalse(reserve(1, cap).should_execute)
+        with self.assertRaises(BudgetExceededError):
+            reserve(3, cap)
+        with self.assertRaises(VerificationFailedError):
+            self.auth.record_effect_receipt(spec.unique_key, EffectReceipt(first.intent.intent_id,
+                            EffectOutcome.FAILED, "unit", "a"*64), broker_capability=cap, **fence)
+        with self.assertRaises(BudgetExceededError):
+            reserve(3, cap)
 
     def test_cancel_and_complete_race_resolved_by_cas(self) -> None:
         spec = TaskSpec(
@@ -72,10 +103,10 @@ class TestStateMachineBudgetAndPolicy(unittest.TestCase):
         )
         rec, _ = self.auth.submit_task(spec)
         rec = self.auth.transition_task(
-            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
         rec = self.auth.transition_task(
-            rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
         lease = self.auth.acquire_lease(rec.unique_key, worker_id="w1")
         running = self.auth.transition_task(
@@ -171,10 +202,10 @@ class TestStateMachineBudgetAndPolicy(unittest.TestCase):
         )
         rec, _ = self.auth.submit_task(spec)
         rec = self.auth.transition_task(
-            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
         rec = self.auth.transition_task(
-            rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
         lease = self.auth.acquire_lease(rec.unique_key, worker_id="w1")
         rec = self.auth.transition_task(

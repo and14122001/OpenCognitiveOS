@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory() as tmp:
         coordinator = InferenceCoordinator(auth, controller_capability=control)
         coordinator.allocate(task.unique_key, str(model_dir), "fixture-v1", "fixture-policy", 32, capability=control)
         for status in (TaskStatus.PLANNED, TaskStatus.READY):
-            rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision, actor_role="controller")
+            rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision, actor_role="controller", controller_capability=auth._controller_capability)
         lease = auth.acquire_lease(task.unique_key, "local")
         fence = dict(worker_id="local", execution_id=lease.execution_id, epoch=lease.fencing_epoch)
         auth.transition_task(task.unique_key, TaskStatus.RUNNING, expected_revision=rec.revision, **fence)

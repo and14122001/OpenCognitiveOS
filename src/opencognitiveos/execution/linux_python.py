@@ -50,7 +50,7 @@ def execute_python(runner, request):
     operation = "sandbox.python/" + spec_hash
     intent = runner.authority.record_tool_intent(task.unique_key, tool="sandbox.python", operation_id=operation,
                     args={"path":path, "sha256":hashlib.sha256(script).hexdigest(), "workspace_id":request.workspace_id},
-                    approval_ref=spec_hash, **fence)
+                    approval_ref=spec_hash, broker_capability=runner.authority._broker_capability, **fence)
     if not intent.should_execute:
         raise ReconciliationRequiredError("Sandbox intent already exists; never redispatch.")
     unit = f"ocos-worker-{uuid.uuid4().hex}.service"
@@ -97,7 +97,8 @@ def execute_python(runner, request):
                                    env=env, capture_output=True, timeout=8)
                     proc.wait(timeout=8)
                 proc.stdout.close()
-            code = proc.returncode
+            timed_out = timed_out or time.monotonic() - started >= request.timeout_seconds
+            code = 124 if timed_out else proc.returncode
         if not info_file.stat().st_size or not json.loads(info_file.read_bytes()).get("child-pid"):
             raise SandboxUnavailableError("Native namespace setup unconfirmed: " + result.decode("utf-8","replace")[:300])
     # Missing/unknown systemd state is not a quiescence certificate.

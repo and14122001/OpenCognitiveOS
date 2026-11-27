@@ -49,7 +49,7 @@ class OfflineRunner:
                 unique_key,
                 TaskStatus.FAILED,
                 expected_revision=latest.revision,
-                actor_role="controller",
+                actor_role="controller", controller_capability=self.authority._controller_capability,
                 error_message=reason,
             )
 
@@ -72,14 +72,14 @@ class OfflineRunner:
                 record.unique_key,
                 TaskStatus.PLANNED,
                 expected_revision=record.revision,
-                actor_role="controller",
+                actor_role="controller", controller_capability=self.authority._controller_capability,
             )
         if record.status == TaskStatus.PLANNED:
             record = self.authority.transition_task(
                 record.unique_key,
                 TaskStatus.READY,
                 expected_revision=record.revision,
-                actor_role="controller",
+                actor_role="controller", controller_capability=self.authority._controller_capability,
             )
 
         self.authority.policy_gate.check_provider(spec, self.provider)

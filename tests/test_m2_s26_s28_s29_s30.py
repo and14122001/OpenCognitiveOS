@@ -104,8 +104,8 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
             acceptance_hash=canonical_json_hash({"goal": f"verify {task_id}"}),
         )
         rec, _ = self.auth.submit_task(task_spec)
-        rec = self.auth.transition_task(rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller")
-        rec = self.auth.transition_task(rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller")
+        rec = self.auth.transition_task(rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability)
+        rec = self.auth.transition_task(rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability)
 
         acc_spec = AcceptanceSpec(
             project_id=project_id,

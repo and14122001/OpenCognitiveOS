@@ -26,7 +26,7 @@ class RoutingTests(unittest.TestCase):
                 task = replace(root, task_id=name, parent_id="root", budget=Budget(max_steps=2, max_retries=0))
                 rec, _ = auth.submit_task(task)
                 for status in (TaskStatus.PLANNED, TaskStatus.READY):
-                    rec = auth.transition_task(task.unique_key, status, expected_revision=rec.revision, actor_role="controller")
+                    rec = auth.transition_task(task.unique_key, status, expected_revision=rec.revision, actor_role="controller", controller_capability=auth._controller_capability)
                 lease = auth.acquire_lease(task.unique_key, name, ttl_seconds=600)
                 fence = dict(worker_id=name, execution_id=lease.execution_id, epoch=lease.fencing_epoch)
                 auth.transition_task(task.unique_key, TaskStatus.RUNNING, expected_revision=rec.revision, **fence)

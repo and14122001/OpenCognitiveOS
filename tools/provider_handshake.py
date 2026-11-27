@@ -2,7 +2,7 @@
 import asyncio
 import sys
 
-from opencognitiveos.providers.acp import initialize
+from opencognitiveos.providers.acp import initialize, open_session
 from opencognitiveos.providers.pi_rpc import get_state
 
 
@@ -17,6 +17,8 @@ async def main():
         else:
             result = await initialize(process.stdout, process.stdin, timeout=30)
             print(adapter, "ACP version", result["protocolVersion"], flush=True)
+            await open_session(process.stdout, process.stdin, cwd="/tmp", timeout=30)
+            print(adapter, "credential-free session/new succeeded", flush=True)
     finally:
         process.stdin.close()
         if process.returncode is None:

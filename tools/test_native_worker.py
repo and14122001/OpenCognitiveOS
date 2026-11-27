@@ -43,7 +43,7 @@ class NativeWorker(unittest.TestCase):
                     {"command":"verify-file script.py","min_pass":1,"worker_script":"script.py"},auth.clock.now_iso())
             reg.register_spec(acceptance,task_spec=spec,capability=cap)
             for status in (TaskStatus.PLANNED,TaskStatus.READY):
-                rec = auth.transition_task(spec.unique_key,status,expected_revision=rec.revision,actor_role="controller")
+                rec = auth.transition_task(spec.unique_key,status,expected_revision=rec.revision,actor_role="controller", controller_capability=auth._controller_capability)
             ws = mgr.create_workspace(workspace_id="ws",repo_id="r",task_id="t",base_sha=sha)
             lease = auth.acquire_lease(spec.unique_key,"worker",ttl_seconds=90)
             fence = dict(worker_id="worker",execution_id=lease.execution_id,epoch=lease.fencing_epoch)

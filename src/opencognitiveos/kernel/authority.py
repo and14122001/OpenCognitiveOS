@@ -101,6 +101,7 @@ class ExecutionAuthority:
         policy_gate: PolicyGate | None = None,
         verifier: IndependentVerifier | None = None,
     ) -> None:
+        self._controller_capability = object()
         self._broker_capability = object()
         self.evidence_completion = None
         self.store = store
@@ -631,6 +632,7 @@ class ExecutionAuthority:
         *,
         expected_revision: int,
         actor_role: str = "worker",
+        controller_capability: object | None = None,
         epoch: int | None = None,
         worker_id: str | None = None,
         execution_id: str | None = None,
@@ -640,6 +642,8 @@ class ExecutionAuthority:
         before_commit_hook: Callable[[sqlite3.Connection], None] | None = None,
     ) -> TaskRecord:
         """Transition task status atomically with CAS revision, role/fencing enforcement, and outbox."""
+        if actor_role == "controller" and controller_capability is not self._controller_capability:
+            raise PolicyDeniedError("Controller transition requires control-plane authorization.")
         if actor_role not in {"worker", "controller"}:
             raise PolicyDeniedError(f"Invalid actor_role '{actor_role}'.")
 
@@ -1117,6 +1121,7 @@ class ExecutionAuthority:
         operation_id: str = "op-0",
         target_path: str | None = None,
         approval_ref: str = "local-policy",
+        broker_capability: object | None = None,
     ) -> ToolIntentSubmission:
         """Persist ToolIntent deterministically; enforce max_steps, deadline, and tool-independent idempotency."""
         now_dt = self.clock.now_utc()
@@ -1140,6 +1145,9 @@ class ExecutionAuthority:
                 epoch=epoch,
                 now_dt=now_dt,
             )
+
+            if tool == "sandbox.python" and broker_capability is not self._broker_capability:
+                raise PolicyDeniedError("Native execution requires broker authorization.")
 
             args_hash = canonical_json_hash(args)
             # M1.4: Idempotency key excludes `tool` so changing tool on same operation_id cannot bypass idempotency!
@@ -1182,6 +1190,13 @@ class ExecutionAuthority:
                     outcome=existing_outcome,
                     disposition=disposition,
                 )
+
+            if tool == "sandbox.python":
+                occupied = conn.execute(
+                    "SELECT COUNT(*) FROM effects WHERE tool = ? AND outcome IN ('PENDING', 'UNKNOWN')", (tool,)
+                ).fetchone()[0]
+                if occupied >= 2:
+                    raise BudgetExceededError("Both native worker slots are reserved.")
 
             current_steps = int(task_row["step_count"]) if "step_count" in task_row.keys() else 0
             reserved = self._reserved_child_steps(conn, spec)
@@ -1420,6 +1435,8 @@ class ExecutionAuthority:
             eff_row = conn.execute("SELECT * FROM effects WHERE intent_id = ?;", (intent_id,)).fetchone()
             if eff_row is None or eff_row["task_unique_key"] != unique_key:
                 raise TaskNotFoundError(f"Effect '{intent_id}' not found on task '{unique_key}'.")
+            if eff_row["tool"] == "sandbox.python":
+                raise PolicyDeniedError("Native execution needs independently verified quiescence.")
             if eff_row["outcome"] not in {EffectOutcome.PENDING.value, EffectOutcome.UNKNOWN.value}:
                 raise InvalidTransitionError(f"Effect '{intent_id}' is already settled ({eff_row['outcome']}).")
 
@@ -1569,7 +1586,7 @@ class ExecutionAuthority:
             unique_key,
             TaskStatus.CANCELLED,
             expected_revision=expected_revision,
-            actor_role="controller",
+            actor_role="controller", controller_capability=self._controller_capability,
             error_message=reason,
         )
 
@@ -1684,7 +1701,7 @@ class ExecutionAuthority:
                         task.unique_key,
                         TaskStatus.FAILED,
                         expected_revision=task.revision,
-                        actor_role="controller",
+                        actor_role="controller", controller_capability=self._controller_capability,
                         error_message="RETRY_WAIT task had unresolved PENDING/UNKNOWN effects on restart.",
                     )
                     failed_budget_exhausted.append(task.unique_key)
@@ -1735,7 +1752,7 @@ class ExecutionAuthority:
                         task.unique_key,
                         TaskStatus.FAILED,
                         expected_revision=task.revision,
-                        actor_role="controller",
+                        actor_role="controller", controller_capability=self._controller_capability,
                         error_message="RETRY_WAIT budget exhausted on restart.",
                     )
                     failed_budget_exhausted.append(task.unique_key)
@@ -1755,7 +1772,7 @@ class ExecutionAuthority:
                         task.unique_key,
                         TaskStatus.FAILED,
                         expected_revision=task.revision,
-                        actor_role="controller",
+                        actor_role="controller", controller_capability=self._controller_capability,
                         error_message="Lease expired on restart and retry budget exhausted.",
                     )
                     failed_budget_exhausted.append(task.unique_key)

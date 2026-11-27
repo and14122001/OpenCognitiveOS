@@ -30,10 +30,10 @@ class TestConcurrencyAndFencing(unittest.TestCase):
         )
         rec, _ = self.auth.submit_task(self.spec)
         rec = self.auth.transition_task(
-            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
         self.ready_rec = self.auth.transition_task(
-            rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller"
+            rec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
 
     def tearDown(self) -> None:

@@ -29,7 +29,7 @@ class CloudQuotaTests(unittest.TestCase):
                              pool="shared", pool_tokens=10, task_tokens=10, expires="2099-01-01T00:00:00Z")
                 for status in (TaskStatus.PLANNED, TaskStatus.READY):
                     rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision,
-                                               actor_role="controller")
+                                               actor_role="controller", controller_capability=auth._controller_capability)
                 lease = auth.acquire_lease(rec.unique_key, worker_id="w")
                 auth.transition_task(rec.unique_key, TaskStatus.RUNNING, expected_revision=rec.revision,
                                      worker_id="w", execution_id=lease.execution_id, epoch=lease.fencing_epoch)

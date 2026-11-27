@@ -75,26 +75,26 @@ class TestM15Systematic(unittest.TestCase):
             return spec, rec, None
 
         rec = self.auth.transition_task(
-            spec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller"
+            spec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
         if target == TaskStatus.PLANNED:
             return spec, rec, None
 
         if target == TaskStatus.FAILED:
             rec = self.auth.transition_task(
-                spec.unique_key, TaskStatus.FAILED, expected_revision=rec.revision, actor_role="controller"
+                spec.unique_key, TaskStatus.FAILED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
             )
             return spec, rec, None
 
         rec = self.auth.transition_task(
-            spec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller"
+            spec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
         )
         if target == TaskStatus.READY:
             return spec, rec, None
 
         if target == TaskStatus.WAITING_APPROVAL:
             rec = self.auth.transition_task(
-                spec.unique_key, TaskStatus.WAITING_APPROVAL, expected_revision=rec.revision, actor_role="controller"
+                spec.unique_key, TaskStatus.WAITING_APPROVAL, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
             )
             return spec, rec, None
 
@@ -128,7 +128,7 @@ class TestM15Systematic(unittest.TestCase):
                 spec.unique_key,
                 TaskStatus.RETRY_WAIT,
                 expected_revision=rec.revision,
-                actor_role="controller",
+                actor_role="controller", controller_capability=self.auth._controller_capability,
             )
             return spec, rec, None
 
@@ -334,11 +334,11 @@ class TestM15Systematic(unittest.TestCase):
             try:
                 if op == "plan":
                     self.auth.transition_task(
-                        spec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller"
+                        spec.unique_key, TaskStatus.PLANNED, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
                     )
                 elif op == "ready":
                     self.auth.transition_task(
-                        spec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller"
+                        spec.unique_key, TaskStatus.READY, expected_revision=rec.revision, actor_role="controller", controller_capability=self.auth._controller_capability
                     )
                 elif op == "lease":
                     leases[spec.unique_key] = self.auth.acquire_lease(spec.unique_key, worker_id="w-fuzz")

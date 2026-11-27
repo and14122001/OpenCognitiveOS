@@ -114,7 +114,7 @@ class TestStorageAndIdempotency(unittest.TestCase):
         dependent = replace(root, task_id="dependent", dependencies=(child.unique_key,))
         rec, _ = auth.submit_task(dependent)
         for status in (TaskStatus.PLANNED, TaskStatus.READY):
-            rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision, actor_role="controller")
+            rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision, actor_role="controller", controller_capability=auth._controller_capability)
         with self.assertRaises(PolicyDeniedError):
             auth.acquire_lease(rec.unique_key, "worker")
 
