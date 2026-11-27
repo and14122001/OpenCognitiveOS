@@ -1,0 +1,134 @@
+{
+  "tokens-dynamic.jsonl": {
+    "sha256": "b20900e0fe9e7497ffa2961bc1a4a962a5c16afd8c90449c8c0265662a81d079",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 4782,
+    "peak_sampled_rss": 361881600,
+    "message_bytes": 200,
+    "wall_ms": 14862,
+    "median_wall_ms": 222.5,
+    "model_calls": 157
+  },
+  "tokens-flat.jsonl": {
+    "sha256": "46024745c0f88938311b4923603c2c68d0304f86fc73501f899f6cfd555a49b0",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 8407,
+    "peak_sampled_rss": 360865792,
+    "message_bytes": 656,
+    "wall_ms": 25819,
+    "median_wall_ms": 378.5,
+    "model_calls": 240
+  },
+  "tokens-hierarchical.jsonl": {
+    "sha256": "e3e677785773ce209f6de945570cd145bfdf9785baa91792a90d49d5f64dcb6d",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 6043,
+    "peak_sampled_rss": 361881600,
+    "message_bytes": 4467,
+    "wall_ms": 19301,
+    "median_wall_ms": 287.0,
+    "model_calls": 120
+  },
+  "tokens-independent.jsonl": {
+    "sha256": "7b534e9190fe052d0068cf6cfbb7c5492a772a40b84e747e46689c2a67d87873",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 5169,
+    "peak_sampled_rss": 361877504,
+    "message_bytes": 0,
+    "wall_ms": 16386,
+    "median_wall_ms": 234.0,
+    "model_calls": 180
+  },
+  "tokens-long-thinking.jsonl": {
+    "sha256": "c042ea0783c8550106b10e57da26975a294e37fc88ac73dd381a1e3e9657fd2d",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 5388,
+    "peak_sampled_rss": 361877504,
+    "message_bytes": 0,
+    "wall_ms": 19445,
+    "median_wall_ms": 275.5,
+    "model_calls": 120
+  },
+  "tokens-single.jsonl": {
+    "sha256": "ed6c9ed34686bd662fd1688a61e3db331b3bb625ff9e00d186240d0ad658238c",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 1723,
+    "peak_sampled_rss": 361877504,
+    "message_bytes": 0,
+    "wall_ms": 5480,
+    "median_wall_ms": 76.5,
+    "model_calls": 60
+  },
+  "wall_ms-dynamic.jsonl": {
+    "sha256": "5ee0a9edc0bc8652406825da4f804ec4de6bb816636eb8d68c885d0fd6586a2b",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 4782,
+    "peak_sampled_rss": 381018112,
+    "message_bytes": 200,
+    "wall_ms": 14116,
+    "median_wall_ms": 230.0,
+    "model_calls": 157
+  },
+  "wall_ms-flat.jsonl": {
+    "sha256": "6b2a631d6d6466c696333adc2ecaf8308f1b3243e475902795ccf6f64def3043",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 8407,
+    "peak_sampled_rss": 381018112,
+    "message_bytes": 656,
+    "wall_ms": 24651,
+    "median_wall_ms": 382.5,
+    "model_calls": 240
+  },
+  "wall_ms-hierarchical.jsonl": {
+    "sha256": "6e090c202cc8442cf1abf33bc80e0fdbd3268ab0f61fa2e0266b89bd86d6599a",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 6043,
+    "peak_sampled_rss": 381018112,
+    "message_bytes": 4467,
+    "wall_ms": 19350,
+    "median_wall_ms": 299.5,
+    "model_calls": 120
+  },
+  "wall_ms-independent.jsonl": {
+    "sha256": "45ad9f2a8233c10a22060f857acfda29a6d4d587de43afe24cd4bd110026e866",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 5169,
+    "peak_sampled_rss": 381018112,
+    "message_bytes": 0,
+    "wall_ms": 15500,
+    "median_wall_ms": 238.5,
+    "model_calls": 180
+  },
+  "wall_ms-long-thinking.jsonl": {
+    "sha256": "dbf83b99f5dc44ba6bcd0dc94391701014dfc473deb4b6d0fda3c9545aa7767a",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 5388,
+    "peak_sampled_rss": 381018112,
+    "message_bytes": 0,
+    "wall_ms": 17366,
+    "median_wall_ms": 274.0,
+    "model_calls": 120
+  },
+  "wall_ms-single.jsonl": {
+    "sha256": "02bbf1bf5d5036f1f5b187874c4186715fcab7062a13b6f7a48e7f02c1467383",
+    "observations": 60,
+    "pass": 0,
+    "tokens": 1723,
+    "peak_sampled_rss": 381018112,
+    "message_bytes": 0,
+    "wall_ms": 5216,
+    "median_wall_ms": 78.5,
+    "model_calls": 60
+  }
+}
