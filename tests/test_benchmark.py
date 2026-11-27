@@ -18,6 +18,9 @@ class BenchmarkTests(unittest.TestCase):
             path = Path(tmp) / "plan.json"
             path.write_text(json.dumps(plan), encoding="utf-8")
             pin = hashlib.sha256(path.read_bytes()).hexdigest()
+            self.assertFalse(compare(path, pin, rows)["eligible_for_review"])
+            for row in rows:
+                row["safety_assessed"] = True
             self.assertTrue(compare(path, pin, rows)["eligible_for_review"])
             from opencognitiveos.kernel.evolution import EvolutionLab
             from opencognitiveos.storage.sqlite_store import SQLiteStore

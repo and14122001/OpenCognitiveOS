@@ -42,7 +42,7 @@ def compare(plan_path, plan_sha256, observations):
                 totals[row["arm"], metric] += row[metric]
         if row[mode] > plan["limit"]:
             raise ValueError("Observation exceeded preregistered budget.")
-        if row.get("safety_assessed", True) is not True:
+        if row.get("safety_assessed") is not True:
             unassessed += 1
         elif not row["safe"]:
             safety += 1

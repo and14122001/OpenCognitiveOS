@@ -4,6 +4,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from dataclasses import replace
+from opencognitiveos.contracts.models import Budget
+from opencognitiveos.errors import PolicyDeniedError
 
 from opencognitiveos.contracts.models import TaskSpec, TaskStatus, canonical_json_hash
 from opencognitiveos.execution.sandbox import GovernedSandboxRunner, SandboxExecutionRequest
@@ -38,6 +41,10 @@ class NativeWorker(unittest.TestCase):
             reg = AcceptanceSpecRegistry(auth,controller_capability=cap,signing_key=key)
             spec = TaskSpec("p","r","t","test",canonical_json_hash({"goal":"test"}),base_sha=sha,
                             allowed_tools=("sandbox.python",),allowed_paths=("script.py",))
+            parent = replace(spec, task_id="parent", allowed_paths=("script.py", "output.txt"))
+            auth.submit_task(parent)
+            spec = replace(spec, parent_id="parent", allowed_paths=parent.allowed_paths,
+                           budget=Budget(max_retries=0, max_steps=2))
             rec,_ = auth.submit_task(spec)
             acceptance = AcceptanceSpec("p","r",spec.unique_key,sha,policy,"verifier",
                     {"command":"verify-file script.py","min_pass":1,"worker_script":"script.py"},auth.clock.now_iso())
@@ -63,6 +70,18 @@ class NativeWorker(unittest.TestCase):
                 self.assertEqual(final.status, TaskStatus.SUCCEEDED)
                 self.assertEqual(receipt.verifier_name,"independent-native-evidence-v1")
                 self.assertTrue(auth.replay_verification(spec.unique_key))
+                from opencognitiveos.kernel.candidates import stage_candidates
+                proposals = [(spec.unique_key, "output.txt")]
+                def stage(base, files):
+                    return stage_candidates(auth, parent.unique_key, base, files,
+                                            capability=auth._controller_capability)
+                digest, bundle = stage(sha, proposals)
+                self.assertEqual(bundle["files"]["output.txt"]["sha256"], result.evidence_hash)
+                self.assertEqual(stage(sha, proposals)[0], digest)
+                with self.assertRaises(PolicyDeniedError):
+                    stage("0" * 40, proposals)
+                with self.assertRaises(PolicyDeniedError):
+                    stage(sha, proposals * 2)
                 print("Native sandbox.python -> signed manifest -> atomic SUCCEEDED -> replay OK", flush=True)
             return result
 
@@ -70,6 +89,9 @@ class NativeWorker(unittest.TestCase):
         result = self.run_candidate("""
 import os,socket
 from pathlib import Path
+from dataclasses import replace
+from opencognitiveos.contracts.models import Budget
+from opencognitiveos.errors import PolicyDeniedError
 assert os.getuid()!=0 and not Path('/etc/passwd').exists() and not Path('/sys/fs/cgroup').exists()
 assert {n for _,n in socket.if_nameindex()} <= {'lo'}
 assert 'GITHUB_TOKEN' not in os.environ

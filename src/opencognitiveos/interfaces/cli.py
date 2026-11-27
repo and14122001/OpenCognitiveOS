@@ -28,6 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit-consistency", help="Audit cross-table DB consistency for a task.")
     p_audit.add_argument("--unique-key", required=True)
 
+    stage = sub.add_parser("stage-candidates", help="Stage signed child outputs for independent review.")
+    stage.add_argument("--base-sha", required=True)
+    stage.add_argument("--candidate", nargs=2, action="append", metavar=("CHILD", "PATH"), required=True)
     replay = sub.add_parser("replay-evidence", help="Replay the sealed receipt and referenced CAS evidence.")
     complete = sub.add_parser("complete-evidence", help="Atomically verify and commit a governed task.")
     verify_file = sub.add_parser("verify-file", help="Check the registered Git blob in a native Linux sandbox.")
@@ -39,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, typ in (("worker", str), ("execution", str), ("epoch", int)):
         for command in (verify_file, approved):
             command.add_argument("--" + name, type=typ, required=True)
-    for command in (replay, complete, verify_file, approved):
+    for command in (stage, replay, complete, verify_file, approved):
         command.add_argument("--config", required=True, help="Canonical path to operator-owned mode-0600 configuration.")
         command.add_argument("--unique-key", required=True)
     complete.add_argument("--worker", required=True)
@@ -139,9 +142,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     store.migrate()
     authority = ExecutionAuthority(store, clock=clock)
 
-    if args.command in ("complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
+    if args.command in ("stage-candidates", "complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
         from opencognitiveos.verification.bootstrap import configure_evidence
         configure_evidence(authority, args.config)
+        if args.command == "stage-candidates":
+            from opencognitiveos.kernel.candidates import stage_candidates
+            digest, bundle = stage_candidates(authority, args.unique_key, args.base_sha, args.candidate,
+                                              capability=authority._controller_capability)
+            print(json.dumps({"sha256": digest, "bundle": bundle}))
+            return 0
         if args.command == "run-approved-python":
             from opencognitiveos.execution.sandbox import GovernedSandboxRunner, SandboxExecutionRequest
             manager = authority.evidence_completion.manager
