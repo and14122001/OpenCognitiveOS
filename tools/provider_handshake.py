@@ -9,7 +9,7 @@ from opencognitiveos.providers.pi_rpc import get_state, prompt_text
 async def main():
     adapter = sys.argv[1]
     from local_agent_model import configure_acp, configure_pi, generated_tokens, start
-    model = start()
+    model = start(adapter)
     if adapter == "pi":
         configure_pi()
     else:
@@ -28,7 +28,7 @@ async def main():
             print(adapter, "ACP version", result["protocolVersion"], flush=True)
             sid = await open_session(process.stdout, process.stdin, cwd="/tmp", timeout=30)
             print(adapter, "credential-free session/new succeeded", flush=True)
-            answer = await acp_prompt(process.stdout, process.stdin, sid, "What is 2 + 2?", timeout=65)
+            answer = await acp_prompt(process.stdout, process.stdin, sid, "What is 2 + 2?", timeout=110)
             print(adapter, "completed text characters:", len(answer), flush=True)
         generated = generated_tokens() - before
         if generated <= 0:

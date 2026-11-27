@@ -1,0 +1,98 @@
+[
+  {
+    "mode": "tokens",
+    "arm": "single",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "tokens",
+    "arm": "long-thinking",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "tokens",
+    "arm": "independent",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "tokens",
+    "arm": "hierarchical",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "tokens",
+    "arm": "flat",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "tokens",
+    "arm": "dynamic",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "wall_ms",
+    "arm": "single",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "wall_ms",
+    "arm": "long-thinking",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "wall_ms",
+    "arm": "independent",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "wall_ms",
+    "arm": "hierarchical",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "wall_ms",
+    "arm": "flat",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  },
+  {
+    "mode": "wall_ms",
+    "arm": "dynamic",
+    "correct": 0,
+    "wins": 0,
+    "losses": 0,
+    "ties": 30
+  }
+]

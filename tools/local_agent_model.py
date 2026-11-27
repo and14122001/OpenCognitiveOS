@@ -8,14 +8,14 @@ import time
 from urllib.request import urlopen
 
 
-def start():
+def start(adapter):
     with Path("/tmp/fixture-model.log").open("wb") as log:
         proc = subprocess.Popen(["/model-runtime/llama-server", "-m", "/model-fixture.gguf",
         "--alias", "ocos-fixture", "--host", "127.0.0.1", "--port", "18080", "-t", "2",
-        "-c", "8192", "-np", "1", "--metrics", "-n", "48", "--no-webui"], stdin=subprocess.DEVNULL,
+        "-c", "65536" if adapter == "hermes" else "8192", "-np", "1", "--metrics", "--reasoning", "off", "-n", "48", "--no-webui"], stdin=subprocess.DEVNULL,
         stdout=log, stderr=subprocess.STDOUT)
     try:
-        for _ in range(80):
+        for _ in range(200):
             if proc.poll() is not None:
                 raise RuntimeError("Local fixture server exited during startup")
             try:
@@ -56,7 +56,7 @@ def configure_acp(adapter):
         os.environ["HERMES_HOME"] = str(path)
         settings = {"model":{"default":"ocos-fixture","provider":"custom:fixture","base_url":base},
             "providers":{"fixture":{"api":base,"api_key":"public-fixture","default_model":"ocos-fixture",
-            "transport":"chat_completions","context_length":8192,"extra_body":{"max_tokens":32}}},
+            "transport":"chat_completions","context_length":65536,"extra_body":{"max_tokens":32}}},
             "platform_toolsets":{"acp":[]}, "agent":{"max_turns":2, "reasoning_effort":"none"}}
         # JSON is a YAML 1.2 subset.
         (path/"config.yaml").write_text(json.dumps(settings))

@@ -53,8 +53,15 @@ fi
     curl --fail --location --retry 2 -o "$stage/llama.tar.gz" https://github.com/ggml-org/llama.cpp/releases/download/b12810/llama-b12810-bin-ubuntu-x64.tar.gz
     echo "63b94be37dcc34cb4933554d4f998e9649841b23da7ffc71d1f66d63762464d7  $stage/llama.tar.gz" | sha256sum --check
     tar -xzf "$stage/llama.tar.gz" --strip-components=1 -C "$stage/model-runtime"
-    curl --fail --location --retry 2 -o "$stage/model.gguf" https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/09816acd5d99df7be770d85ea30822623dab342c/SmolLM2-135M-Instruct-Q4_K_M.gguf
-    echo "2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d  $stage/model.gguf" | sha256sum --check
+    if [[ "$provider" == hermes ]]; then
+        model_url=https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/Qwen3.5-0.8B-Q4_K_M.gguf
+        model_sha=bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517
+    else
+        model_url=https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/09816acd5d99df7be770d85ea30822623dab342c/SmolLM2-135M-Instruct-Q4_K_M.gguf
+        model_sha=2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d
+    fi
+    curl --fail --location --retry 2 -o "$stage/model.gguf" "$model_url"
+    echo "$model_sha  $stage/model.gguf" | sha256sum --check
     cp tools/local_agent_model.py "$stage/local_agent_model.py"
     args+=(--ro-bind "$stage/model-runtime" /model-runtime --ro-bind "$stage/model.gguf" /model-fixture.gguf
            --ro-bind "$stage/local_agent_model.py" /local_agent_model.py)
@@ -65,7 +72,7 @@ fi
 cp -r src "$stage/src"
 cp tools/provider_handshake.py "$stage/probe.py"
 sudo -n systemd-run --quiet --expand-environment=no --wait --collect --pipe \
-    -p MemoryMax=2G -p TasksMax=128 -p RuntimeMaxSec=150 -p KillMode=control-group \
+    -p MemoryMax=4G -p TasksMax=128 -p RuntimeMaxSec=220 -p KillMode=control-group \
     /usr/bin/bwrap --unshare-all --die-with-parent --new-session --clearenv --uid 65534 --gid 65534 \
     --cap-drop ALL "${args[@]}" --ro-bind "$stage/provider" /provider --ro-bind "$stage/src" /src \
     --ro-bind "$stage/probe.py" /probe.py --proc /proc --dev /dev --tmpfs /tmp --chdir /tmp \

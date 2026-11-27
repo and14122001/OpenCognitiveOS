@@ -9,3 +9,5 @@
 第三輪預註冊 4078955de63ce283091184b2004a7c7be720862d，執行碼與計畫先於推理提交。30 道新算術題、兩個 seeds、六種邏輯策略、兩種預算共 720 筆，所有最終整數均由相同 grammar 約束。每個策略在每種預算均為 0/60；未觀察到可升級收益。單一模型共用一個推理槽。每個 token 試驗各策略在相同 384-token 上限下，單 Agent 實耗 1,723 tokens，平面四次推理實耗 8,407 tokens（皆為 60 筆合計）。持續記錄每次 prompt/eval 時間；KV 配置 11.25 MiB，RSS 為採樣值，無逐核心能耗實測。此為 CPU 參考模型結果。完整盲測與獨立安全驗證仍待完成。
 
 六策略逐筆資料在 six-strategies/，以 Base64 包裝 gzip 保留原始 JSONL。解碼後 SHA256、通過數、延遲、用量、訊息流量及呼叫數見 summary.json。範例命令為 `base64 -d tokens-single.jsonl.gz.b64 | gzip -dc | sha256sum`。
+
+逐筆獨立重播命令為 `python3 tools/audit_strategy_results.py docs/validation/ab/six-strategies`。重新解碼 12 份封存、重建投票與整數評分、核對每筆資源上限；720 筆均一致。此為事後匿名評分重播。

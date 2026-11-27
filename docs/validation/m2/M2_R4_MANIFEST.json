@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0.0",
+  "milestone": "M2_R4_S26_S28_S29_S30",
+  "created_at_utc": "2026-11-27T09:19:30Z",
+  "baseline_source": {
+    "OpenCognitiveOS-M0-M1.zip_sha256": "dae64febad0610e933e792b5a9305d55934bd9862254492164af70a38091232c",
+    "M2_consolidated_candidate.patch_sha256": "5aedc6aa11ef27cb749601af32ab834a255e48986cc9604216faea273d768cae",
+    "M2_batch_recovery_full.log_sha256": "2f3d7b300d1484d3081919f4610750a0aa4694bbe3ecfbaf740f93b56653171c",
+    "baseline_git_sha": "f943fd1dc817c40b4cf0afdc92a8b302862013aa",
+    "baseline_tests": {
+      "total": 101,
+      "pass": 96,
+      "fail": 0,
+      "skip": 5
+    }
+  },
+  "git": {
+    "branch": "feat/gemini-m2-r4",
+    "base_sha": "f943fd1dc817c40b4cf0afdc92a8b302862013aa",
+    "head_sha": "486b04aafdb66d318203aa1f6cdb203314fe2709",
+    "patch_apply_check_exit_code": 0
+  },
+  "environment": {
+    "os": "Linux 6.12.105+",
+    "arch": "x86_64",
+    "python_version": "3.11.2",
+    "git_version": "2.39.5"
+  },
+  "test_results": {
+    "command": "PYTHONPATH=src PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v",
+    "exit_code": 0,
+    "total": 112,
+    "pass": 107,
+    "fail": 0,
+    "skip": 5
+  },
+  "modified_files": [
+    "src/opencognitiveos/verification/__init__.py",
+    "src/opencognitiveos/verification/acceptance.py",
+    "src/opencognitiveos/verification/evidence_store.py",
+    "src/opencognitiveos/verification/manifest.py",
+    "tests/test_m2_s26_s28_s29_s30.py"
+  ],
+  "deliverables_sha256": {
+    "M2_R4_S26_S28_S29_S30.patch": "f4f2e3d6fd0e34f384d47873425743a33a382c0927a01fc9a2299c5301474589",
+    "M2_R4_TEST_LOG.txt": "e2e63bc7f356be6f43edaaa054dc598423041e2c87f630a34f55c66428be5afa",
+    "M2_R4_SECURITY_REVIEW.md": "5ee9435f120db78f7e2617b778f89ebe858870367e8b1a2ee2ffde3a486183b1",
+    "M2_R4_ACCEPTANCE_REPORT.md": "a6158401be27a97af381eaf7480e0dfc826abf97d83e1416a57d61a30dc0fe1f"
+  },
+  "known_limitations": [
+    "Filesystem CAS and SQLite do not form a cross-system distributed 2PC atomic transaction.",
+    "SHA-256 integrity does not equal origin authenticity and cannot defend against an attacker with full controller and SQLite DB write access.",
+    "5 baseline tests requiring bwrap or macOS/Windows native execution were SKIPPED on this container.",
+    "Local VM only provides Python 3.11.2; Python 3.12-3.15 requires GitHub Actions matrix."
+  ]
+}
