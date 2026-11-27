@@ -1,0 +1,87 @@
+"""Single-controller inference slot, restart-safe handoff and conservative usage accounting."""
+import json
+from opencognitiveos.contracts.models import canonical_json_hash
+from opencognitiveos.errors import BudgetExceededError, PolicyDeniedError
+
+
+class InferenceCoordinator:
+    def __init__(self, authority, *, controller_capability):
+        if controller_capability is None:
+            raise ValueError("Missing inference supervisor capability.")
+        self.auth = authority
+        self._control = controller_capability
+        with self.auth.store.transaction() as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS inference_allocations (
+                task TEXT PRIMARY KEY REFERENCES tasks(unique_key), token_limit INTEGER NOT NULL,
+                model TEXT NOT NULL, tokenizer TEXT NOT NULL, policy_hash TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS inference_calls (
+                reservation TEXT PRIMARY KEY, task TEXT NOT NULL REFERENCES inference_allocations(task),
+                execution_id TEXT NOT NULL, epoch INTEGER NOT NULL, tokens INTEGER NOT NULL,
+                used INTEGER, snapshot TEXT NOT NULL, snapshot_hash TEXT NOT NULL, state TEXT NOT NULL)""")
+            conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS one_active_inference
+                ON inference_calls(state) WHERE state='ACTIVE'""")
+
+    def authorize_supervisor(self, capability):
+        if capability is not self._control:
+            raise PolicyDeniedError("Inference requires the configured supervisor.")
+
+    def allocate(self, task, model, tokenizer, policy_hash, tokens, *, capability):
+        if (capability is not self._control or type(tokens) is not int or tokens <= 0
+                or not model or not tokenizer or not policy_hash):
+            raise PolicyDeniedError("Missing trusted inference allocation.")
+        with self.auth.store.transaction() as conn:
+            task_row = conn.execute("SELECT parent_id FROM tasks WHERE unique_key=?", (task,)).fetchone()
+            if task_row is None or task_row["parent_id"] is not None:
+                raise PolicyDeniedError("A shared token allocation belongs to the root task.")
+            conn.execute("INSERT INTO inference_allocations VALUES (?,?,?,?,?)",
+                         (task, tokens, model, tokenizer, policy_hash))
+
+    def begin(self, task, *, worker_id, execution_id, epoch, request_id, max_tokens):
+        if not request_id or type(max_tokens) is not int or max_tokens <= 0:
+            raise PolicyDeniedError("Invalid inference reservation.")
+        with self.auth.store.transaction() as conn:
+            row = conn.execute("SELECT * FROM tasks WHERE unique_key=?", (task,)).fetchone()
+            if row is None or row["status"] != "RUNNING":
+                raise PolicyDeniedError("Inactive inference task.")
+            self.auth._validate_active_lease(conn, unique_key=task, current_epoch=row["fencing_epoch"],
+                    worker_id=worker_id, execution_id=execution_id, epoch=epoch, now_dt=self.auth.clock.now_utc())
+            root = row
+            while root["parent_id"] is not None:
+                root = conn.execute("SELECT * FROM tasks WHERE repo_id=? AND project_id=? AND task_id=?",
+                                    (root["repo_id"], root["project_id"], root["parent_id"])).fetchone()
+            allocation = conn.execute("SELECT * FROM inference_allocations WHERE task=?", (root["unique_key"],)).fetchone()
+            if allocation is None:
+                raise PolicyDeniedError("No root token allocation.")
+            rid = canonical_json_hash([task, execution_id, epoch, request_id])
+            if conn.execute("SELECT 1 FROM inference_calls WHERE reservation=?", (rid,)).fetchone():
+                raise PolicyDeniedError("Replay cannot start a second inference call.")
+            if conn.execute("SELECT 1 FROM inference_calls WHERE state='ACTIVE'").fetchone():
+                raise BudgetExceededError("Inference slot still occupied.")
+            spent = conn.execute("SELECT COALESCE(SUM(COALESCE(used,tokens)),0) FROM inference_calls WHERE task=?",
+                                 (root["unique_key"],)).fetchone()[0]
+            if spent + max_tokens > allocation["token_limit"]:
+                raise BudgetExceededError("Shared token budget exhausted.")
+            spec = self.auth._spec_from_row(row)
+            # Only controller-derived provenance enters the handoff; no arbitrary context or credential values.
+            snapshot = dict(task_key=task, root=root["unique_key"], execution_id=execution_id, epoch=epoch,
+                            base_sha=spec.base_sha, acceptance_hash=spec.acceptance_hash,
+                            policy_hash=allocation["policy_hash"], model_id=allocation["model"],
+                            tokenizer_version=allocation["tokenizer"], budget_reservation_id=rid,
+                            max_tokens=max_tokens, data_class=spec.data_class.value)
+            conn.execute("INSERT INTO inference_calls VALUES (?,?,?,?,?,NULL,?,?,'ACTIVE')",
+                         (rid, root["unique_key"], execution_id, epoch, max_tokens, json.dumps(snapshot),
+                          canonical_json_hash(snapshot)))
+            return rid, snapshot
+
+    def settle(self, reservation, actual_tokens, *, capability):
+        """Only the transport supervisor confirms exit. Unknown usage consumes the reservation."""
+        if capability is not self._control:
+            raise PolicyDeniedError("Only the trusted supervisor can release the inference slot.")
+        with self.auth.store.transaction() as conn:
+            row = conn.execute("SELECT * FROM inference_calls WHERE reservation=?", (reservation,)).fetchone()
+            if row is None or row["state"] != "ACTIVE":
+                raise PolicyDeniedError("No matching live reservation.")
+            used = row["tokens"] if actual_tokens is None else actual_tokens
+            if type(used) is not int or used < 0 or used > row["tokens"]:
+                raise BudgetExceededError("Unreconciled usage; retain occupied slot.")
+            conn.execute("UPDATE inference_calls SET used=?,state='CLOSED' WHERE reservation=?", (used, reservation))

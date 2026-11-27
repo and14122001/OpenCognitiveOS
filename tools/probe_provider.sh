@@ -13,8 +13,15 @@ case "$provider" in
         digest=3c7f00715eb512e165c0da8cad314d73c83b54d5bf7748be4adc618fc8357b68
         ;;
     hermes)
-        /usr/bin/python3 -m venv "$dest/venv"
-        "$dest/venv/bin/pip" install --disable-pip-version-check 'hermes-agent[acp] @ git+https://github.com/NousResearch/hermes-agent.git@8fc0374447313e276f6b9a2764bfc750190c966a'
+        upstream="$RUNNER_TEMP/hermes-source"
+        git init -q "$upstream"
+        git -C "$upstream" fetch --depth=1 https://github.com/NousResearch/hermes-agent.git 8fc0374447313e276f6b9a2764bfc750190c966a
+        git -C "$upstream" checkout --detach FETCH_HEAD
+        test "$(git -C "$upstream" rev-parse HEAD)" = 8fc0374447313e276f6b9a2764bfc750190c966a
+        /usr/bin/python3 -m venv "$RUNNER_TEMP/resolver"
+        "$RUNNER_TEMP/resolver/bin/pip" install 'uv==0.11.2'
+        UV_PROJECT_ENVIRONMENT="$dest/venv" "$RUNNER_TEMP/resolver/bin/uv" sync --project "$upstream" \
+            --python /usr/bin/python3 --no-dev --no-editable --extra acp --frozen
         ;;
     *) exit 2 ;;
 esac

@@ -32,6 +32,21 @@ class RoutingTests(unittest.TestCase):
                 auth.transition_task(task.unique_key, TaskStatus.RUNNING, expected_revision=rec.revision, **fence)
                 members.append((task.unique_key, fence))
             (a, sender), (b, recipient) = members
+            from opencognitiveos.kernel.inference import InferenceCoordinator
+            from opencognitiveos.errors import BudgetExceededError
+
+            slots = InferenceCoordinator(auth, controller_capability=control)
+            slots.allocate(root.unique_key, "local-fixture", "v1", "policy", 10, capability=control)
+            rid, snap = slots.begin(a, request_id="first", max_tokens=7, **sender)
+            self.assertEqual(snap["task_key"], a)
+            slots = InferenceCoordinator(ExecutionAuthority(store, clock=clock), controller_capability=control)
+            with self.assertRaises(BudgetExceededError):
+                slots.begin(b, request_id="second", max_tokens=2, **recipient)
+            slots.settle(rid, None, capability=control)
+            with self.assertRaises(BudgetExceededError):
+                slots.begin(b, request_id="second", max_tokens=4, **recipient)
+            rid, _ = slots.begin(b, request_id="second", max_tokens=3, **recipient)
+            slots.settle(rid, 3, capability=control)
             version = bus.replace_routes(root.unique_key, 0, [(a,b)], capability=control)
             args = dict(root=root.unique_key, version=version, sender=a, recipient=b, kind="proposal", body="review",
                         sequence=1, **sender)

@@ -20,3 +20,5 @@
 | Hermes ACP | github.com/NousResearch/hermes-agent，MIT，8fc0374447313e276f6b9a2764bfc750190c966a | CI 獨立測試 initialize；無模型推理。 |
 | OpenCode ACP | github.com/anomalyco/opencode，MIT，f4e363c8295fa90a03dddc451882fffe8fbce357 | 固定 v1.19.6 Linux release SHA256，CI 獨立測試 initialize。 |
 | Pi RPC | github.com/earendil-works/pi，MIT，ef4a1cfcca62b77ad3558337ff3e1c7f6beeadfe | 固定 v1.6.1 Linux release SHA256，CI 獨立測試 get_state。 |
+
+Run 45980031044 的 Ubuntu 固定檔案驗收、OpenCode ACP 與 Pi RPC 通過。Hermes 原始 pip 安裝遇到上游 Pillow 固定版本衝突，後續依固定原始碼的 uv.lock 重跑。推理槽與根任務 token 共池由 SQLite 跨重啟保留，未確認推理停止時禁止重用。MLX/oMLX 的 loopback HTTP 行為經本機協定測試；macOS 公開 Runner 另執行小型隨機權重 Llama 原生 MLX 運算。
