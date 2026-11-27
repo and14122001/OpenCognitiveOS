@@ -1,0 +1,52 @@
+name: M1 acceptance
+on:
+  pull_request:
+  push:
+    branches: [feat/m0-m1-core]
+permissions:
+  contents: read
+concurrency:
+  group: acceptance-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+        python: ['3.11', '3.12', '3.13', '3.14', '3.15-dev']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PYTHONWARNINGS: error::ResourceWarning
+      PYTHONPATH: src
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - name: Build dependencies
+        run: python -m pip install setuptools wheel packaging
+      - name: Regression and fault injection
+        run: |
+          set -o pipefail
+          python --version
+          git rev-parse HEAD
+          python -m unittest discover -s tests -v 2>&1 | tee acceptance.log
+      - name: Offline wheel and CLI
+        run: |
+          python -m pip wheel --no-build-isolation --no-deps --no-index -w dist .
+          python -m pip install --no-index --no-deps --find-links dist opencognitiveos
+          opencognitiveos --version
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acceptance-${{ matrix.os }}-${{ matrix.python }}
+          path: acceptance.log
+          retention-days: 7
