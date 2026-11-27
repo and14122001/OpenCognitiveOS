@@ -30,7 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     replay = sub.add_parser("replay-evidence", help="Replay the sealed receipt and referenced CAS evidence.")
     complete = sub.add_parser("complete-evidence", help="Atomically verify and commit a governed task.")
-    for command in (replay, complete):
+    verify_file = sub.add_parser("verify-file", help="Check the registered Git blob in a native Linux sandbox.")
+    verify_file.add_argument("--workspace", required=True)
+    for name, typ in (("worker", str), ("execution", str), ("epoch", int)):
+        verify_file.add_argument("--" + name, type=typ, required=True)
+    for command in (replay, complete, verify_file):
         command.add_argument("--config", required=True, help="Canonical path to operator-owned mode-0600 configuration.")
         command.add_argument("--unique-key", required=True)
     complete.add_argument("--worker", required=True)
@@ -130,9 +134,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     store.migrate()
     authority = ExecutionAuthority(store, clock=clock)
 
-    if args.command in ("complete-evidence", "replay-evidence"):
+    if args.command in ("complete-evidence", "replay-evidence", "verify-file"):
         from opencognitiveos.verification.bootstrap import configure_evidence
         configure_evidence(authority, args.config)
+        if args.command == "verify-file":
+            from opencognitiveos.verification.file_verifier import verify_file
+            manifest = verify_file(authority, task_key=args.unique_key, workspace_id=args.workspace,
+                                   worker_id=args.worker, execution_id=args.execution, epoch=args.epoch)
+            print(json.dumps({"evidence_id": manifest.evidence_id, "manifest_hash": manifest.manifest_hash()}))
+            return 0
         if args.command == "replay-evidence":
             valid = authority.replay_verification(args.unique_key)
             print(json.dumps({"valid": valid}))

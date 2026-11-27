@@ -58,6 +58,9 @@ class RoutingTests(unittest.TestCase):
             restarted = TaskMessages(ExecutionAuthority(store, clock=clock), controller_capability=control)
             query = dict(root=root.unique_key, recipient=b, **recipient)
             self.assertEqual([x["digest"] for x in restarted.inbox(**query)], [digest])
+            restarted.acknowledge(**query, source_worker_task=a, source_execution=sender["execution_id"],
+                                  sequence=1, digest=digest)
+            self.assertEqual(bus.inbox(**query), [])
             with self.assertRaises(CASConflictError):
                 restarted.replace_routes(root.unique_key, 0, [], capability=control)
             restarted.replace_routes(root.unique_key, version, [], capability=control)

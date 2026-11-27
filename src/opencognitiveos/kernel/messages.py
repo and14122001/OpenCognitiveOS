@@ -24,6 +24,13 @@ class TaskMessages:
                 digest TEXT NOT NULL, body TEXT NOT NULL, created TEXT NOT NULL, expires TEXT NOT NULL,
                 PRIMARY KEY(root,sender,execution_id,recipient,sequence))""")
 
+            conn.execute("""CREATE TABLE IF NOT EXISTS message_deliveries (
+                root TEXT NOT NULL, sender TEXT NOT NULL, execution_id TEXT NOT NULL, recipient TEXT NOT NULL,
+                sequence INTEGER NOT NULL, acknowledged TEXT NOT NULL,
+                PRIMARY KEY(root,sender,execution_id,recipient,sequence),
+                FOREIGN KEY(root,sender,execution_id,recipient,sequence)
+                  REFERENCES task_messages(root,sender,execution_id,recipient,sequence))""")
+
     def replace_routes(self, root, expected_version, routes, *, capability):
         if capability is not self._control:
             raise PolicyDeniedError("Topology update requires controller authority.")
@@ -90,6 +97,8 @@ class TaskMessages:
             self._authorize(conn, recipient, worker_id, execution_id, epoch)
             rows = conn.execute("""SELECT m.* FROM task_messages m JOIN message_groups g
                 ON g.root=m.root AND g.version=m.version WHERE m.root=? AND m.recipient=? AND m.expires>?
+                AND NOT EXISTS (SELECT 1 FROM message_deliveries a WHERE
+                (a.root,a.sender,a.execution_id,a.recipient,a.sequence)=(m.root,m.sender,m.execution_id,m.recipient,m.sequence))
                 ORDER BY m.rowid""", (root, recipient, _format_utc(self.auth.clock.now_utc())))
             result = []
             for row in rows:
@@ -97,3 +106,17 @@ class TaskMessages:
                     raise PolicyDeniedError("Corrupt message.")
                 result.append(dict(row))
             return result
+
+    def acknowledge(self, *, root, recipient, source_worker_task, source_execution, sequence,
+                    digest, worker_id, execution_id, epoch):
+        with self.auth.store.transaction() as conn:
+            self._authorize(conn, recipient, worker_id, execution_id, epoch)
+            key = (root, source_worker_task, source_execution, recipient, sequence)
+            message = conn.execute("""SELECT m.digest,m.expires,m.version,g.version AS current_version
+                FROM task_messages m JOIN message_groups g USING(root)
+                WHERE (m.root,m.sender,m.execution_id,m.recipient,m.sequence)=(?,?,?,?,?)""", key).fetchone()
+            if (message is None or message["digest"] != digest or message["version"] != message["current_version"]
+                    or message["expires"] <= self.auth.clock.now_iso()):
+                raise PolicyDeniedError("Message is unavailable for acknowledgement.")
+            conn.execute("INSERT OR IGNORE INTO message_deliveries VALUES (?,?,?,?,?,?)",
+                         (*key, self.auth.clock.now_iso()))

@@ -665,25 +665,7 @@ class ExecutionAuthority:
                 )
 
             if target_status == TaskStatus.SUCCEEDED:
-                if not verification_id:
-                    raise VerificationFailedError(
-                        f"Cannot transition '{unique_key}' to SUCCEEDED without a persisted VerificationReceipt."
-                    )
-                v_row = conn.execute(
-                    "SELECT * FROM verification_receipts WHERE verification_id = ?;", (verification_id,)
-                ).fetchone()
-                if (
-                    v_row is None
-                    or v_row["task_unique_key"] != unique_key
-                    or v_row["acceptance_hash"] != spec.acceptance_hash
-                    or v_row["execution_id"] != execution_id
-                    or int(v_row["epoch"]) != current_epoch
-                    or int(v_row["revision"]) != current_rev
-                    or int(v_row["passed"]) != 1
-                ):
-                    raise VerificationFailedError(
-                        f"VerificationReceipt '{verification_id}' missing or does not bind task/acceptance/execution/epoch/revision."
-                    )
+                raise VerificationFailedError("Only the atomic verifier may commit SUCCEEDED.")
 
             new_rev = current_rev + 1
             result_json = json.dumps(result, sort_keys=True, ensure_ascii=False) if result is not None else row["result_json"]

@@ -446,7 +446,7 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         from opencognitiveos.verification.completion import EvidenceCompletion
 
         native = os.environ.get("OCOS_NATIVE_SEALED_TEST") == "1"
-        command = "verify_linux_isolation.sh app.py" if native else "fixture verifier"
+        command = "verify-file app.py" if native else "fixture verifier"
         task, spec, _ = self._make_task_and_spec("sealed", start_task=False, command=command)
         manager = WorkspaceManager(authority=self.auth, repo_path=self.repo_dir, workspaces_root=self.base / "trees")
         ws = manager.create_workspace(workspace_id="ws", repo_id=task.repo_id, task_id=task.task_id, base_sha=self.base_sha)
@@ -460,26 +460,24 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
                                        "fixture", "fixture"), **fence)
         rec = self.auth.transition_task(task.unique_key, TaskStatus.VERIFYING, expected_revision=rec.revision, **fence)
         wt = Path(ws.worktree_path)
-        git = capture_trusted_git_state(wt, base_sha=self.base_sha, evidence_store=self.evidence_store)
-        report = b"fixture verifier log"
-        version = "fixture"
-        if native:
-            script = Path(__file__).resolve().parents[1] / "tools" / "verify_linux_isolation.sh"
-            expected = subprocess.check_output(["git", "-C", str(self.repo_dir), "show", self.base_sha + ":app.py"])
-            digest = hashlib.sha256(expected).hexdigest()
-            report = subprocess.check_output(["bash", str(script), str(wt / "app.py"), digest],
-                                             stderr=subprocess.STDOUT, timeout=45)
-            self.assertIn(("verified candidate blob " + digest).encode(), report)
-            version = subprocess.check_output(["bwrap", "--version"], text=True).strip()
-            print(report.decode(), flush=True)
-        env = ExecutionEnvironmentRecord.capture(repo_root=wt, sandbox_backend="linux-bwrap", sandbox_version=version,
-                    test_command=spec.criteria["command"], exit_code=0, passed_count=1, failed_count=0, skipped_count=0)
-        log = self.evidence_store.store_bytes(report, kind=EvidenceKind.EXECUTION_LOG)
-        manifest = self.manifest_reg.create_and_persist_manifest(task_spec=task, worker_id="w",
-                    execution_id=lease.execution_id, fencing_epoch=lease.fencing_epoch, workspace_id="ws", git_state=git,
-                    environment=env, artifact_hashes={"test_log": log.digest}, verifier_id=spec.verifier_id,
-                    capability=self.verifier_capability)
         gate = EvidenceCompletion(manager, self.evidence_store, self.spec_key, self.manifest_key, self.policy_hash)
+        if native:
+            from opencognitiveos.verification.file_verifier import verify_file
+            self.auth.evidence_completion = gate
+            manifest = verify_file(self.auth, task_key=task.unique_key, workspace_id=ws.workspace_id, **fence)
+            report = self.evidence_store.read_bytes(manifest.artifact_hashes["test_log"])
+            self.assertIn(b"verified candidate blob", report)
+            print(report.decode(), flush=True)
+        else:
+            git = capture_trusted_git_state(wt, base_sha=self.base_sha, evidence_store=self.evidence_store)
+            env = ExecutionEnvironmentRecord.capture(repo_root=wt, sandbox_backend="linux-bwrap", sandbox_version="fixture",
+                        test_command=spec.criteria["command"], exit_code=0, passed_count=1, failed_count=0, skipped_count=0)
+            log = self.evidence_store.store_bytes(b"fixture verifier log", kind=EvidenceKind.EXECUTION_LOG)
+            manifest = self.manifest_reg.create_and_persist_manifest(task_spec=task, worker_id="w",
+                        execution_id=lease.execution_id, fencing_epoch=lease.fencing_epoch, workspace_id="ws", git_state=git,
+                        environment=env, artifact_hashes={"test_log": log.digest}, verifier_id=spec.verifier_id,
+                        capability=self.verifier_capability)
+        log_digest = manifest.artifact_hashes["test_log"]
         kwargs = dict(**fence, expected_revision=rec.revision, output_payload=output, evidence_id=manifest.evidence_id)
         self.auth.evidence_completion = replace(gate, verifier_key=secrets.token_bytes(32))
         with self.assertRaises(VerificationFailedError):
@@ -496,6 +494,16 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         self.assertEqual(final.status, TaskStatus.SUCCEEDED)
         self.assertTrue(self.auth.replay_verification(task.unique_key))
         self.assertTrue(self.auth.audit_database_consistency(task.unique_key)["ok"])
+        from opencognitiveos.kernel.knowledge import KnowledgeGraph
+        curator = object()
+        graph = KnowledgeGraph(self.auth, controller_capability=curator)
+        args = dict(task=task.unique_key, subject="claim", target="observation", capability=curator)
+        self.assertEqual(graph.append(relation="supports", **args), graph.append(relation="supports", **args))
+        graph.append(relation="contradicts", **args)
+        edges = graph.history(project=task.project_id, repo=task.repo_id, subject="claim")
+        self.assertEqual([e["relation"] for e in edges], ["supports", "contradicts"])
+        self.assertEqual(graph.history(project=task.project_id, repo=task.repo_id, subject="claim",
+                                       through_sequence=edges[0]["seq"]), edges[:1])
         if os.name == "posix":
             from opencognitiveos.interfaces.cli import main
             config = dict(repo=str(self.repo_dir), workspaces=str(self.base / "trees"),
@@ -518,11 +526,11 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         recovered = ExecutionAuthority(SQLiteStore(restored / "state.sqlite3"), clock=self.clock)
         recovered.evidence_completion = replace(gate, cas=ContentAddressedEvidenceStore(restored / "cas"))
         self.assertTrue(recovered.replay_verification(task.unique_key))
-        (snapshot / "objects" / log.digest).write_bytes(b"corrupted")
+        (snapshot / "objects" / log_digest).write_bytes(b"corrupted")
         with self.assertRaises(DatabaseIntegrityError):
             restore_snapshot(snapshot, self.base / "bad-restore", pin)
         self.assertFalse((self.base / "bad-restore").exists())
-        (self.base / "cas" / log.relative_path).unlink()
+        (self.evidence_store.evidence_root / log_digest[:2] / log_digest).unlink()
         self.assertFalse(self.auth.replay_verification(task.unique_key))
 
     def test_r4_legacy_completion_denied(self):

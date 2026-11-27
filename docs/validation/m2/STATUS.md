@@ -24,3 +24,5 @@
 Run 45980031044 的 Ubuntu 固定檔案驗收、OpenCode ACP 與 Pi RPC 通過。Hermes 原始 pip 安裝遇到上游 Pillow 固定版本衝突，後續依固定原始碼的 uv.lock 重跑。推理槽與根任務 token 共池由 SQLite 跨重啟保留，未確認推理停止時禁止重用。MLX/oMLX 的 loopback HTTP 行為經本機協定測試；macOS 公開 Runner 另執行小型隨機權重 Llama 原生 MLX 運算。
 
 Run 45980639212 的 hosted macOS 原生 MLX CPU 測試通過。Hermes 固定版本要求 editable 安裝，後續測試沿用上游 lock 並唯讀掛載固定來源。新增 complete-evidence、replay-evidence、版本化模型設定升級與回滾。DirectSDK adapter 僅在已配置受信任報價、PUBLIC 任務及零成本保證時可進入傳輸；本輪不使用個人憑證或雲端推理。
+
+verify-file 為可安裝 CLI 原生驗收入口，只接受受信任 AcceptanceSpec 指定的固定 Git blob。它核對工作區、租約及 Git 物件，以控制器複本執行唯讀測試，成功後產生簽章 Manifest。正式一般指令執行仍由 GovernedSandboxRunner 拒絕，直到其獨立安全驗收通過。時序證據關係支援矛盾證據、逐筆重播與時間序號查詢。訊息收件端可確認、重啟去重。
