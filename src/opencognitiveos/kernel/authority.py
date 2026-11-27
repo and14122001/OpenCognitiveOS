@@ -603,6 +603,27 @@ class ExecutionAuthority:
             row = conn.execute("SELECT * FROM tasks WHERE unique_key = ?;", (unique_key,)).fetchone()
             return self._task_from_row(row), True
 
+    def _cancel_descendants(self, conn, spec, now_iso):
+        rows = conn.execute("""WITH RECURSIVE descendants(task_id) AS (
+            SELECT task_id FROM tasks WHERE project_id=? AND repo_id=? AND parent_id=?
+            UNION SELECT t.task_id FROM tasks t JOIN descendants d ON t.parent_id=d.task_id
+            WHERE t.project_id=? AND t.repo_id=?)
+            SELECT t.* FROM tasks t JOIN descendants d ON d.task_id=t.task_id
+            WHERE t.project_id=? AND t.repo_id=? AND t.status NOT IN ('SUCCEEDED','FAILED','CANCELLED')""",
+            (spec.project_id, spec.repo_id, spec.task_id, spec.project_id, spec.repo_id, spec.project_id, spec.repo_id))
+        for child in rows.fetchall():
+            key = child["unique_key"]
+            pending = conn.execute("SELECT 1 FROM effects WHERE task_unique_key=? AND outcome IN ('PENDING','UNKNOWN')",
+                                   (key,)).fetchone()
+            state = "NEEDS_RECONCILIATION" if pending else "CANCELLED"
+            conn.execute("DELETE FROM leases WHERE task_unique_key=?", (key,))
+            conn.execute("UPDATE tasks SET status=?, revision=revision+1, updated_at_utc=? WHERE unique_key=?",
+                         (state, now_iso, key))
+            self._append_event_and_outbox(conn, event_type="TASK_" + state, task_unique_key=key,
+                execution_id="controller", epoch=child["fencing_epoch"],
+                payload={"from":child["status"], "to":state, "ancestor":spec.unique_key,
+                         "revision":child["revision"]+1})
+
     def transition_task(
         self,
         unique_key: str,
@@ -688,6 +709,9 @@ class ExecutionAuthority:
                 TaskStatus.NEEDS_RECONCILIATION,
             }:
                 conn.execute("DELETE FROM leases WHERE task_unique_key = ?;", (unique_key,))
+
+            if target_status == TaskStatus.CANCELLED:
+                self._cancel_descendants(conn, spec, now_iso)
 
             self._append_event_and_outbox(
                 conn,

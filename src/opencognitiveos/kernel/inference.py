@@ -21,6 +21,10 @@ class InferenceCoordinator:
             conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS one_active_inference
                 ON inference_calls(state) WHERE state='ACTIVE'""")
 
+            conn.execute("""CREATE TABLE IF NOT EXISTS inference_releases (
+                task TEXT PRIMARY KEY REFERENCES inference_allocations(task),
+                generation INTEGER NOT NULL, config_hash TEXT NOT NULL)""")
+
     def authorize_supervisor(self, capability):
         if capability is not self._control:
             raise PolicyDeniedError("Inference requires the configured supervisor.")
@@ -35,6 +39,24 @@ class InferenceCoordinator:
                 raise PolicyDeniedError("A shared token allocation belongs to the root task.")
             conn.execute("INSERT INTO inference_allocations VALUES (?,?,?,?,?)",
                          (task, tokens, model, tokenizer, policy_hash))
+
+    def allocate_current(self, task, policy_hash, tokens, *, capability):
+        self.authorize_supervisor(capability)
+        if type(tokens) is not int or tokens <= 0 or not policy_hash:
+            raise PolicyDeniedError("Missing trusted allocation limits.")
+        with self.auth.store.transaction() as conn:
+            task_row = conn.execute("SELECT parent_id FROM tasks WHERE unique_key=?", (task,)).fetchone()
+            if task_row is None or task_row["parent_id"] is not None:
+                raise PolicyDeniedError("Release allocations require a root task.")
+            row = conn.execute("SELECT * FROM model_releases ORDER BY generation DESC LIMIT 1").fetchone()
+            if row is None:
+                raise PolicyDeniedError("No approved release.")
+            cfg = json.loads(row["config"])
+            if canonical_json_hash(cfg) != row["config_hash"]:
+                raise PolicyDeniedError("Active release digest mismatch.")
+            conn.execute("INSERT INTO inference_allocations VALUES (?,?,?,?,?)",
+                (task,tokens,cfg["model"],cfg["tokenizer"],policy_hash))
+            conn.execute("INSERT INTO inference_releases VALUES (?,?,?)",(task,row["generation"],row["config_hash"]))
 
     def begin(self, task, *, worker_id, execution_id, epoch, request_id, max_tokens):
         if not request_id or type(max_tokens) is not int or max_tokens <= 0:
@@ -52,6 +74,12 @@ class InferenceCoordinator:
             allocation = conn.execute("SELECT * FROM inference_allocations WHERE task=?", (root["unique_key"],)).fetchone()
             if allocation is None:
                 raise PolicyDeniedError("No root token allocation.")
+            pin = conn.execute("SELECT generation,config_hash FROM inference_releases WHERE task=?",
+                               (root["unique_key"],)).fetchone()
+            if pin is not None:
+                release = conn.execute("SELECT generation,config_hash FROM model_releases ORDER BY generation DESC LIMIT 1").fetchone()
+                if release is None or tuple(release) != tuple(pin):
+                    raise PolicyDeniedError("Release changed; a fresh controller allocation is required.")
             rid = canonical_json_hash([task, execution_id, epoch, request_id])
             if conn.execute("SELECT 1 FROM inference_calls WHERE reservation=?", (rid,)).fetchone():
                 raise PolicyDeniedError("Replay cannot start a second inference call.")
@@ -68,6 +96,8 @@ class InferenceCoordinator:
                             policy_hash=allocation["policy_hash"], model_id=allocation["model"],
                             tokenizer_version=allocation["tokenizer"], budget_reservation_id=rid,
                             max_tokens=max_tokens, data_class=spec.data_class.value)
+            if pin is not None:
+                snapshot["release_generation"], snapshot["config_hash"] = tuple(pin)
             conn.execute("INSERT INTO inference_calls VALUES (?,?,?,?,?,NULL,?,?,'ACTIVE')",
                          (rid, root["unique_key"], execution_id, epoch, max_tokens, json.dumps(snapshot),
                           canonical_json_hash(snapshot)))

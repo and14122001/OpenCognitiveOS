@@ -33,8 +33,8 @@ with tempfile.TemporaryDirectory() as tmp:
     args = ModelArgs(model_type="llama", hidden_size=32, num_hidden_layers=1, intermediate_size=64,
                      num_attention_heads=4, num_key_value_heads=2, rms_norm_eps=1e-5, vocab_size=32)
     model = Model(args)
-    config = asdict(args)
-    config.update(bos_token_id=1, eos_token_id=2)
+    config = {k: v for k, v in asdict(args).items() if v is not None}
+    config.update(max_position_embeddings=128, bos_token_id=1, eos_token_id=2)
     (model_dir / "config.json").write_text(json.dumps(config))
     mx.save_safetensors(str(model_dir / "model.safetensors"), dict(tree_flatten(model.parameters())), metadata={"format":"mlx"})
     vocab = {"<unk>": 0, "<s>": 1, "</s>": 2, **{str(n): n for n in range(3, 32)}}

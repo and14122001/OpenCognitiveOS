@@ -36,9 +36,13 @@ class RoutingTests(unittest.TestCase):
             from opencognitiveos.errors import BudgetExceededError
 
             slots = InferenceCoordinator(auth, controller_capability=control)
-            slots.allocate(root.unique_key, "local-fixture", "v1", "policy", 10, capability=control)
+            from opencognitiveos.kernel.evolution import EvolutionLab
+            lab = EvolutionLab(store, controller_capability=control)
+            lab.initialize({"model":"local-fixture","tokenizer":"v1","strategy":"single"}, capability=control)
+            slots.allocate_current(root.unique_key, "policy", 10, capability=control)
             rid, snap = slots.begin(a, request_id="first", max_tokens=7, **sender)
             self.assertEqual(snap["task_key"], a)
+            self.assertEqual(snap["release_generation"], 1)
             slots = InferenceCoordinator(ExecutionAuthority(store, clock=clock), controller_capability=control)
             with self.assertRaises(BudgetExceededError):
                 slots.begin(b, request_id="second", max_tokens=2, **recipient)
@@ -67,3 +71,7 @@ class RoutingTests(unittest.TestCase):
             self.assertEqual(restarted.inbox(**query), [])
             with self.assertRaises(PolicyDeniedError):
                 bus.publish(**{**args, "sequence": 2})
+            root_rec = auth.get_task(root.unique_key)
+            auth.cancel_task(root.unique_key, expected_revision=root_rec.revision)
+            for member, _ in members:
+                self.assertEqual(auth.get_task(member).status, TaskStatus.CANCELLED)

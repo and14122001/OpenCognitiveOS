@@ -370,22 +370,14 @@ class GovernedSandboxRunner:
     def _authorize_lease(self, request: SandboxExecutionRequest) -> None:
         now_dt = self.authority.clock.now_utc()
         with self.authority.store.open_connection() as conn:
-            lease = conn.execute(
-                "SELECT execution_id, worker_id, fencing_epoch, expires_at_utc FROM leases WHERE task_unique_key = ?;",
-                (request.task_unique_key,),
-            ).fetchone()
-        if lease is None:
-            raise LeaseExpiredError(f"No active lease for task '{request.task_unique_key}'.")
-        if int(lease["fencing_epoch"]) != request.fencing_epoch:
-            raise StaleEpochError(
-                f"Fencing epoch mismatch: expected {lease['fencing_epoch']}, got {request.fencing_epoch}."
-            )
-        if str(lease["execution_id"]) != request.execution_id or str(lease["worker_id"]) != request.worker_id:
-            raise StaleEpochError(
-                f"Execution/worker mismatch for task '{request.task_unique_key}'."
-            )
-        if _parse_utc(str(lease["expires_at_utc"])) <= now_dt:
-            raise LeaseExpiredError(f"Lease expired for task '{request.task_unique_key}'.")
+            row = conn.execute("SELECT * FROM tasks WHERE unique_key=?", (request.task_unique_key,)).fetchone()
+            if row is None or not conn.execute("SELECT 1 FROM leases WHERE task_unique_key=?",
+                                              (request.task_unique_key,)).fetchone():
+                raise LeaseExpiredError("No active sandbox lease.")
+            self.authority._check_deadline(self.authority._spec_from_row(row), now_dt)
+            self.authority._validate_active_lease(conn, unique_key=request.task_unique_key,
+                current_epoch=row["fencing_epoch"], worker_id=request.worker_id, execution_id=request.execution_id,
+                epoch=request.fencing_epoch, now_dt=now_dt)
 
     def run(self, request: SandboxExecutionRequest) -> SandboxExecutionResult:
         self._authorize_lease(request)
