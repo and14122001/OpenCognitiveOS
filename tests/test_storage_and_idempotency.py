@@ -94,6 +94,30 @@ class TestStorageAndIdempotency(unittest.TestCase):
         created_count = sum(1 for _, c in results if c)
         self.assertEqual(created_count, 1)
 
+    def test_recursive_budget_and_dependency_scope(self) -> None:
+        from dataclasses import replace
+        from opencognitiveos.errors import BudgetExceededError, PolicyDeniedError
+        from opencognitiveos.contracts.models import Budget, TaskStatus
+
+        self.store.migrate()
+        auth = ExecutionAuthority(self.store, clock=self.clock)
+        root = _make_spec("root")
+        auth.submit_task(root)
+        child = replace(root, task_id="child", parent_id="root", budget=Budget(max_steps=6, max_retries=0))
+        auth.submit_task(child)
+        with self.assertRaises(BudgetExceededError):
+            auth.submit_task(replace(child, task_id="sibling"))
+        with self.assertRaises(PolicyDeniedError):
+            auth.submit_task(replace(child, task_id="foreign-child", project_id="foreign"))
+        with self.assertRaises(PolicyDeniedError):
+            auth.submit_task(replace(child, task_id="tool-child", allowed_tools=("unapproved",)))
+        dependent = replace(root, task_id="dependent", dependencies=(child.unique_key,))
+        rec, _ = auth.submit_task(dependent)
+        for status in (TaskStatus.PLANNED, TaskStatus.READY):
+            rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision, actor_role="controller")
+        with self.assertRaises(PolicyDeniedError):
+            auth.acquire_lease(rec.unique_key, "worker")
+
     def test_invalid_restore_preserves_destination(self) -> None:
         from opencognitiveos.errors import DatabaseIntegrityError
 

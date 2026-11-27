@@ -235,6 +235,10 @@ class ExecutionAuthority:
         epoch: int | None,
         now_dt: datetime,
     ) -> sqlite3.Row:
+        task = conn.execute("SELECT project_id, repo_id, parent_id FROM tasks WHERE unique_key=?", (unique_key,)).fetchone()
+        if task is None:
+            raise TaskNotFoundError(unique_key)
+        ExecutionAuthority._check_ancestors(conn, task)
         if epoch is None or not worker_id or not execution_id:
             raise StaleEpochError(
                 f"Worker operation on '{unique_key}' requires worker_id, execution_id, and epoch."
@@ -460,6 +464,66 @@ class ExecutionAuthority:
                     pass
         return result_summary
 
+    @staticmethod
+    def _check_ancestors(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+        for _ in range(4):
+            if row["parent_id"] is None:
+                return
+            row = conn.execute(
+                "SELECT project_id, repo_id, status, parent_id FROM tasks WHERE project_id=? AND repo_id=? AND task_id=?",
+                (row["project_id"], row["repo_id"], row["parent_id"]),
+            ).fetchone()
+            if row is None or row["status"] in ("CANCELLED", "FAILED", "SUCCEEDED"):
+                raise PolicyDeniedError("Parent no longer authorizes child execution.")
+        raise PolicyDeniedError("Invalid persisted task ancestry.")
+
+    @staticmethod
+    def _reserved_child_steps(conn: sqlite3.Connection, spec: TaskSpec) -> int:
+        children = conn.execute(
+            "SELECT spec_json FROM tasks WHERE repo_id=? AND project_id=? AND parent_id=?",
+            (spec.repo_id, spec.project_id, spec.task_id),
+        )
+        return sum(int(json.loads(row[0])["budget"]["max_steps"]) for row in children)
+
+    def _validate_task_graph(self, conn: sqlite3.Connection, spec: TaskSpec) -> None:
+        # Dependencies only point to already admitted tasks. Edges are immutable.
+        for key in spec.dependencies:
+            if not conn.execute(
+                "SELECT 1 FROM tasks WHERE unique_key=? AND project_id=? AND repo_id=?",
+                (key, spec.project_id, spec.repo_id),
+            ).fetchone():
+                raise PolicyDeniedError("Dependency outside task scope or missing.")
+        if spec.parent_id is None:
+            return
+        ancestor_id = spec.parent_id
+        for depth in range(1, 5):
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE repo_id=? AND project_id=? AND task_id=?",
+                (spec.repo_id, spec.project_id, ancestor_id),
+            ).fetchone()
+            if row is None or depth > 3 or row["status"] in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                raise PolicyDeniedError("Task ancestry unavailable, terminal, or exceeds depth three.")
+            if depth == 1:
+                parent = self._spec_from_row(row)
+                siblings = conn.execute(
+                    "SELECT COUNT(*) FROM tasks WHERE repo_id=? AND project_id=? AND parent_id=?",
+                    (spec.repo_id, spec.project_id, parent.task_id),
+                ).fetchone()[0]
+                # Child retries and cloud use await a shared reservation ledger.
+                if (siblings >= 3 or spec.cloud_approved or spec.budget.max_cost_usd != 0
+                        or spec.budget.max_retries != 0 or spec.base_sha != parent.base_sha
+                        or spec.deadline != parent.deadline or spec.data_class != parent.data_class
+                        or not set(spec.allowed_paths) <= set(parent.allowed_paths)
+                        or not set(spec.allowed_providers) <= set(parent.allowed_providers)
+                        or not set(spec.allowed_tools) <= set(parent.allowed_tools)):
+                    raise PolicyDeniedError("Child exceeds parent scope or branching limits.")
+                available = parent.budget.max_steps - row["step_count"] - self._reserved_child_steps(conn, parent)
+                if not 0 < spec.budget.max_steps <= available:
+                    raise BudgetExceededError("Child step reservation exceeds parent balance.")
+            ancestor_id = row["parent_id"]
+            if ancestor_id is None:
+                return
+
     def submit_task(self, spec: TaskSpec) -> tuple[TaskRecord, bool]:
         """Submit task idempotently by repo_id::task_id. Returns (record, created)."""
         unique_key = spec.unique_key
@@ -477,6 +541,7 @@ class ExecutionAuthority:
                     )
                 return self._task_from_row(existing), False
 
+            self._validate_task_graph(conn, spec)
             conn.execute(
                 """
                 INSERT OR IGNORE INTO projects (project_id, name, created_at_utc)
@@ -681,6 +746,13 @@ class ExecutionAuthority:
             registry_exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='acceptance_specs'"
             ).fetchone()
+            workspace_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces'"
+            ).fetchone()
+            if workspace_table and conn.execute(
+                "SELECT 1 FROM workspaces WHERE task_unique_key=?", (unique_key,)
+            ).fetchone():
+                raise VerificationFailedError("Worktree execution requires trusted evidence completion.")
             if registry_exists and conn.execute(
                 "SELECT 1 FROM acceptance_specs WHERE task_unique_key = ?", (unique_key,)
             ).fetchone():
@@ -855,6 +927,14 @@ class ExecutionAuthority:
                 raise TaskNotFoundError(f"Task '{unique_key}' not found.")
             spec = self._spec_from_row(task_row)
             self._check_deadline(spec, now_dt)
+
+            for key in spec.dependencies:
+                if not conn.execute(
+                    "SELECT 1 FROM tasks WHERE unique_key=? AND project_id=? AND repo_id=? AND status='SUCCEEDED'",
+                    (key, spec.project_id, spec.repo_id),
+                ).fetchone():
+                    raise PolicyDeniedError("Dependency has no successful terminal result.")
+            self._check_ancestors(conn, task_row)
 
             status = TaskStatus(task_row["status"])
             if status == TaskStatus.NEEDS_RECONCILIATION:
@@ -1070,7 +1150,8 @@ class ExecutionAuthority:
                 )
 
             current_steps = int(task_row["step_count"]) if "step_count" in task_row.keys() else 0
-            if spec.budget.max_steps <= 0 or current_steps >= spec.budget.max_steps:
+            reserved = self._reserved_child_steps(conn, spec)
+            if current_steps + reserved >= spec.budget.max_steps:
                 raise BudgetExceededError(
                     f"Step budget exhausted for '{unique_key}': {current_steps} >= {spec.budget.max_steps}."
                 )

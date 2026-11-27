@@ -8,6 +8,7 @@ fi
 unit="ocos-acceptance-$$"
 work=$(mktemp -d)
 trap 'rm -r -- "$work"' EXIT
+chmod 0711 "$work"
 mkdir -m 0777 "$work/workspace"
 touch "$work/host-only"
 export OCOS_HOST_CANARY=host-only

@@ -47,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_backup = sub.add_parser("backup", help="Create consistent SQLite backup.")
     p_backup.add_argument("--dest", required=True)
 
+    p_restore = sub.add_parser("restore", help="Restore a verified SQLite backup to --db.")
+    p_restore.add_argument("--source", required=True)
+
     p_reconcile = sub.add_parser("reconcile", help="Reconcile a task in NEEDS_RECONCILIATION.")
     p_reconcile.add_argument("--unique-key", required=True)
     p_reconcile.add_argument("--intent-id", required=True)
@@ -60,6 +63,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     clock = SystemClock()
+    if args.command == "restore":
+        restored = SQLiteStore.restore_from(args.source, args.db, clock=clock)
+        print(json.dumps(restored.integrity_check()))
+        return 0
     store = SQLiteStore(Path(args.db), clock=clock)
 
     if args.command == "init-db":
