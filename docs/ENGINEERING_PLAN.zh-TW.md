@@ -1,4 +1,4 @@
-# v8.5 工程架構與開發計畫（提案）
+# v8.6 工程架構與開發計畫（提案）
 狀態：設計，未實作。承接 v8.4，不變更既有治理。
 ## 架構
 採單機 modular monolith 起步，程序隔離的 adapters，不先引入微服務。src/opencognitiveos/{kernel,contracts,providers,agents,execution,world,knowledge,verification,evolution,interfaces,storage}。Python 3.15 為候選，實際支援矩陣依依賴測試。初期標準庫 SQLite/unittest/asyncio。
@@ -27,3 +27,6 @@ M0 契約、ADR、授權與安全威脅模型。M1 mock provider + SQLite 狀態
 - https://github.com/dwjorgeb/hermes-orchestrator
 - https://github.com/CCDevelopForFun/agent-controller
 先驗證上游 commit、license、實際功能與安全；不引入第二個生命週期權威。
+
+## v8.6 動態認知網路增補
+以 [ADR-0002](adr/ADR-0002-governed-cognitive-network.md) 為新版認知層規格，保留 ADR-0001 單一執行權威。M1.6 Run #6 15/15 CI success；未合併。M2 安全隔離先行，M3 訊息代理、M5 分叉與動態拓撲、M6 等預算消融；新增 S61–72 Pending。不得將設計當成完成實作。既有 S01–60 不改號；M4 S43–48 依 M1.6 ACCEPTANCE_MATRIX，S49–60 依該矩陣分配，修正舊工程計畫的編號歧義。
