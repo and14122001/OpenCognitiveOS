@@ -56,3 +56,13 @@ jobs:
             acceptance.log
             wheel.log
           retention-days: 7
+
+  linux-isolation-primitives:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify kernel-enforced cgroup and bubblewrap controls
+        run: bash tools/verify_linux_isolation.sh

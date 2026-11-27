@@ -66,9 +66,11 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         self.controller_capability = object()
         self.acceptance_reg = AcceptanceSpecRegistry(self.auth, clock=self.clock, controller_capability=self.controller_capability)
         self.evidence_store = ContentAddressedEvidenceStore(self.base / "cas", clock=self.clock)
+        self.verifier_capability = object()
         self.manifest_reg = EvidenceManifestRegistry(
             authority=self.auth,
             acceptance_registry=self.acceptance_reg,
+            verifier_capability=self.verifier_capability,
             evidence_store=self.evidence_store,
             clock=self.clock,
         )
@@ -281,6 +283,14 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
             skipped_count=0,
         )
 
+        with self.assertRaises(PolicyDeniedError):
+            self.manifest_reg.create_and_persist_manifest(
+                task_spec=task_spec, execution_id=lease.execution_id,
+                worker_id="worker-r4", fencing_epoch=lease.fencing_epoch,
+                workspace_id="ws-1", git_state=git_state, environment=env_rec,
+                artifact_hashes={}, verifier_id=acc_spec.verifier_id, actor_role="verifier",
+            )
+
         # Forged Git SHA rejected
         with self.assertRaises(VerificationFailedError):
             capture_trusted_git_state(
@@ -293,6 +303,7 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         # Wrong fencing_epoch rejected
         with self.assertRaises(StaleEpochError):
             self.manifest_reg.create_and_persist_manifest(
+                capability=self.verifier_capability,
                 task_spec=task_spec,
                 execution_id=lease.execution_id,
                 worker_id="worker-r4",
@@ -307,6 +318,7 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         # Forged verifier_id rejected
         with self.assertRaises(VerificationFailedError):
             self.manifest_reg.create_and_persist_manifest(
+                capability=self.verifier_capability,
                 task_spec=task_spec,
                 execution_id=lease.execution_id,
                 worker_id="worker-r4",
@@ -320,6 +332,7 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
 
         # Persist valid manifest
         manifest = self.manifest_reg.create_and_persist_manifest(
+            capability=self.verifier_capability,
             task_spec=task_spec,
             execution_id=lease.execution_id,
             worker_id="worker-r4",
@@ -373,6 +386,7 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         self.clock.advance(seconds=120)
         with self.assertRaises(LeaseExpiredError):
             self.manifest_reg.create_and_persist_manifest(
+                capability=self.verifier_capability,
                 task_spec=task_spec,
                 execution_id=lease.execution_id,
                 worker_id="worker-r4",
@@ -391,7 +405,7 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         state = capture_trusted_git_state(self.repo_dir, base_sha=self.base_sha, evidence_store=self.evidence_store)
         env = ExecutionEnvironmentRecord.capture(repo_root=self.repo_dir, sandbox_backend="mock", sandbox_version="1", test_command="test", exit_code=0, passed_count=1, failed_count=0, skipped_count=0)
         with self.assertRaises(VerificationFailedError):
-            self.manifest_reg.create_and_persist_manifest(task_spec=task, execution_id=lease.execution_id, worker_id="w", fencing_epoch=lease.fencing_epoch, workspace_id="ws", git_state=replace(state, base_sha="f"*40), environment=env, artifact_hashes={}, verifier_id=acc.verifier_id)
+            self.manifest_reg.create_and_persist_manifest(capability=self.verifier_capability, task_spec=task, execution_id=lease.execution_id, worker_id="w", fencing_epoch=lease.fencing_epoch, workspace_id="ws", git_state=replace(state, base_sha="f"*40), environment=env, artifact_hashes={}, verifier_id=acc.verifier_id)
 
     def test_s30_uncommitted_changes_require_snapshot_and_cannot_masquerade_as_head(self) -> None:
         (self.repo_dir / "uncommitted.py").write_text("print('dirty')\n", encoding="utf-8")

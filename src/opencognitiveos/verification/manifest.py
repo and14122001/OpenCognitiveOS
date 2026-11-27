@@ -26,6 +26,7 @@ from opencognitiveos.contracts.models import (
     TaskSpec,
     canonical_json_hash,
 )
+from opencognitiveos.errors import PolicyDeniedError
 from opencognitiveos.errors import (
     LeaseExpiredError,
     StaleEpochError,
@@ -338,8 +339,10 @@ class EvidenceManifestRegistry:
         authority: ExecutionAuthority,
         acceptance_registry: AcceptanceSpecRegistry,
         evidence_store: ContentAddressedEvidenceStore,
+        verifier_capability: object | None = None,
         clock: Clock | None = None,
     ) -> None:
+        self._verifier_capability = verifier_capability if verifier_capability is not None else object()
         self.authority = authority
         self.store = authority.store
         self.acceptance_registry = acceptance_registry
@@ -378,7 +381,10 @@ class EvidenceManifestRegistry:
         artifact_hashes: dict[str, str],
         verifier_id: str,
         actor_role: str = "verifier",
+        capability: object | None = None,
     ) -> EvidenceManifest:
+        if capability is not self._verifier_capability:
+            raise PolicyDeniedError("Manifest publication requires verifier authority.")
         if git_state.base_sha != task_spec.base_sha:
             raise VerificationFailedError("Manifest base SHA differs from TaskSpec.")
         trusted_spec, spec_hash = self._load_spec_unchecked_policy(task_spec, verifier_id)

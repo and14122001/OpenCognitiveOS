@@ -16,7 +16,8 @@ import hashlib
 import os
 import re
 import stat
-import threading
+import sqlite3
+from contextlib import closing, contextmanager
 import uuid
 from dataclasses import dataclass
 from enum import Enum
@@ -102,7 +103,18 @@ class ContentAddressedEvidenceStore:
         self.max_object_bytes = int(max_object_bytes)
         self.max_total_bytes = int(max_total_bytes)
         self.clock: Clock = clock or SystemClock()
-        self._lock = threading.Lock()
+        self._lock_path = self.root_dir / "evidence" / ".writer.sqlite3"
+
+    @contextmanager
+    def _exclusive_writer(self):
+        # One writer across store instances and processes, including crash recovery.
+        self._validate_staging()
+        if self._lock_path.exists() or self._lock_path.is_symlink():
+            _assert_safe_node(self._lock_path)
+        with closing(sqlite3.connect(self._lock_path, timeout=30)) as lock:
+            lock.execute("BEGIN IMMEDIATE")
+            yield
+
 
     @staticmethod
     def validate_digest(digest: str) -> str:
@@ -162,6 +174,10 @@ class ContentAddressedEvidenceStore:
         if actor_role not in {"controller", "verifier"}:
             raise PolicyDeniedError(f"Unauthorized actor_role '{actor_role}' for evidence write.")
 
+        with self._exclusive_writer():
+            return self._write_locked(stream, kind)
+
+    def _write_locked(self, stream: BinaryIO, kind: EvidenceKind) -> StoredEvidenceRecord:
         hasher = hashlib.sha256()
         total_len = 0
         tail_overlap = b""
@@ -183,7 +199,7 @@ class ContentAddressedEvidenceStore:
                 window = tail_overlap + chunk
                 if _contains_secret(window):
                     raise PolicyDeniedError("Secret/credential material forbidden in evidence store.")
-                tail_overlap = chunk[-128:]
+                tail_overlap = window[-128:]
                 hasher.update(chunk)
                 view = memoryview(chunk)
                 written = 0
@@ -199,42 +215,41 @@ class ContentAddressedEvidenceStore:
         digest = hasher.hexdigest()
         rel_path = f"evidence/sha256/{digest[:2]}/{digest}"
 
-        with self._lock:
-            target = self._safe_object_path(digest)
-            if target.exists():
-                _assert_safe_node(target)
-                # Re-verify existing content before deduplicating
-                existing_digest = self._hash_file(target)
-                if existing_digest != digest:
-                    tmp_path.unlink(missing_ok=True)
-                    raise EvidenceIntegrityError(
-                        f"Existing evidence at '{digest}' failed integrity check (got {existing_digest})."
-                    )
-                tmp_path.unlink(missing_ok=True)
-                return StoredEvidenceRecord(
-                    digest=digest,
-                    kind=kind,
-                    size_bytes=total_len,
-                    relative_path=rel_path,
-                    deduplicated=True,
-                    created_at_utc=self.clock.now_iso(),
-                )
-
-            if self.current_total_bytes() + total_len > self.max_total_bytes:
+        target = self._safe_object_path(digest)
+        if target.exists():
+            _assert_safe_node(target)
+            # Re-verify existing content before deduplicating
+            existing_digest = self._hash_file(target)
+            if existing_digest != digest:
                 tmp_path.unlink(missing_ok=True)
                 raise EvidenceIntegrityError(
-                    f"Evidence store total capacity ({self.max_total_bytes} bytes) exceeded."
+                    f"Existing evidence at '{digest}' failed integrity check (got {existing_digest})."
                 )
+            tmp_path.unlink(missing_ok=True)
+            return StoredEvidenceRecord(
+                digest=digest,
+                kind=kind,
+                size_bytes=total_len,
+                relative_path=rel_path,
+                deduplicated=True,
+                created_at_utc=self.clock.now_iso(),
+            )
 
-            target.parent.mkdir(parents=True, exist_ok=True)
-            _assert_safe_node(target.parent)
-            os.replace(tmp_path, target)
-            if os.name == "posix":
-                dir_fd = os.open(str(target.parent), os.O_RDONLY)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
+        if self.current_total_bytes() + total_len > self.max_total_bytes:
+            tmp_path.unlink(missing_ok=True)
+            raise EvidenceIntegrityError(
+                f"Evidence store total capacity ({self.max_total_bytes} bytes) exceeded."
+            )
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _assert_safe_node(target.parent)
+        os.replace(tmp_path, target)
+        if os.name == "posix":
+            dir_fd = os.open(str(target.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
 
         return StoredEvidenceRecord(
             digest=digest,
@@ -291,7 +306,7 @@ class ContentAddressedEvidenceStore:
         """Remove incomplete staging files after crash/interruption without touching committed blobs."""
         self._validate_staging()
         cleaned: list[str] = []
-        with self._lock:
+        with self._exclusive_writer():
             for item in sorted(self.staging_dir.iterdir()):
                 if item.name.startswith(".tmp-"):
                     item.unlink(missing_ok=True)
