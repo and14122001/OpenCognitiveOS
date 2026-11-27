@@ -54,9 +54,9 @@
 | S28 | Linux 真實子程序逾時及終止、非零結果留存；R4 CAS 跨程序容量、去重及重驗 | 未知 unit 狀態持續保留供對帳 |
 | S29 | 唯讀獨立驗證固定 Git blob；另一個 cgroup 執行固定 Python 驗收程式，驗證 worker 候選位元組，錯誤內容拒絕封存 | 多檔建置／測試工具鏈 |
 | S30 | 兩把獨立信任金鑰、簽章與 SHA 重驗、CAS 損毀拒絕、狀態／收據／Outbox 交易回滾、重播 | 完整工具鏈與目標設備驗收 |
-| S31–42 | Hermes 與 OpenCode 實際 ACP initialize、session/new；Pi RPC get_state；Apple arm64 MLX CPU、MLX-LM 與 oMLX 原生 HTTP 生成及用量結算 | 完整代理推理與取消、目標設備模型比較 |
-| S43–48 | 零成本任務授權、資料分類、共池、保留與結算；DirectSDK 模擬傳輸 | 真實 agy、DirectSDK、Codex OAuth 與帳戶零成本權益 |
-| S49–54 | DAG 前置依賴、深度 3／分支 3、父額度共享；可重播證據圖與矛盾邊 | 完整世界模型與端對端多代理協作 |
+| S31–42 | Hermes 與 OpenCode ACP、Pi RPC 實際呼叫本地模型及文字回覆；Apple arm64 MLX CPU、MLX-LM 與 oMLX 原生 HTTP 生成及用量結算 | 長程工程任務、取消與目標設備模型比較 |
+| S43–48 | 零成本任務授權、資料分類、共池、保留與結算；官方 Google Gen AI SDK 3.6.1 真實 HTTP 序列化／反序列化、合成 loopback 服務 | 真實 agy、DirectSDK、Codex OAuth 與帳戶零成本權益 |
+| S49–54 | 固定 Git tree／blob 軟體檔案清冊、DAG 前置依賴、深度 3／分支 3、父額度共享；可重播證據圖與矛盾邊 | 完整世界模型與端對端多代理協作 |
 | S55–60 | Linux 原生工作證據在另一台 macOS 主機還原並重播、版本化發布與回滾、配對小模型實測；文字／PCM／RGB 附件契約及快照 | 真實影音模型輸入、目標設備災難復原與七天耐久 |
 | S61–64 | SQLite 任務訊息、作用域與 epoch、TTL、順序與確認、容量限制、父 token／步數保留 | 完整拒絕稽核及跨群組壓力測試 |
 | S65–69 | 隔離推理快照、拓撲版本、取消級聯、證據候選 CLI、模型／策略固定與切換防護 | 內容交接、候選變更獨立驗證及完整共同錯誤測試 |

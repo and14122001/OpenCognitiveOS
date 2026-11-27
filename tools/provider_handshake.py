@@ -1,6 +1,7 @@
 """CI entry point, inside a credential-free bubblewrap namespace with a pinned local CPU model."""
 import asyncio
 import sys
+import subprocess
 
 from opencognitiveos.providers.acp import initialize, open_session, prompt_text as acp_prompt
 from opencognitiveos.providers.pi_rpc import get_state, prompt_text
@@ -43,9 +44,6 @@ async def main():
         print("Isolated model generated tokens before failure:", generated_tokens() - before, flush=True)
         raise
     finally:
-        if model is not None:
-            model.terminate()
-            model.wait(timeout=5)
         process.stdin.close()
         if process.returncode is None:
             process.terminate()
@@ -54,6 +52,13 @@ async def main():
         except TimeoutError:
             process.kill()
             await process.wait()
+        finally:
+            model.terminate()
+            try:
+                model.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                model.kill()
+                model.wait(timeout=5)
 
 
 asyncio.run(main())

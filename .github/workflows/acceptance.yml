@@ -48,6 +48,16 @@ jobs:
           python -I -m opencognitiveos --version
           python -I -c "import sysconfig, pathlib, subprocess, os, importlib.metadata as m, opencognitiveos as p; root=pathlib.Path(sysconfig.get_path('purelib')).resolve(); assert pathlib.Path(p.__file__).resolve().is_relative_to(root), p.__file__; assert m.version('opencognitiveos') == '0.1.6.dev1'; exe=pathlib.Path(sysconfig.get_path('scripts')) / ('opencognitiveos.exe' if os.name == 'nt' else 'opencognitiveos'); print(p.__file__, exe, flush=True); subprocess.run([str(exe), '--version'], check=True)"
 
+      - name: Verify official Google SDK request against a loopback-only fixture
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m pip download --no-deps --only-binary=:all: -d "$RUNNER_TEMP" 'google-genai==3.6.1'
+          wheel="$RUNNER_TEMP/google_genai-3.6.1-py3-none-any.whl"
+          echo "4b35064da644f61d7e5f6c0e9406bf63b945e7e96b4af18cadb3371cbc3acf74  $wheel" | sha256sum --check
+          python -m pip install "$wheel"
+          python tools/probe_google_sdk.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -116,7 +126,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: [hermes, opencode, pi]
+        provider: [hermes, opencode, pi, codex]
     steps:
       - uses: actions/checkout@v4
         with:

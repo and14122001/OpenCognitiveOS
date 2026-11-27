@@ -4,6 +4,10 @@ provider=$1
 dest="$RUNNER_TEMP/ocos-provider"
 mkdir -p "$dest"
 case "$provider" in
+    codex)
+        url=https://github.com/openai/codex/releases/download/rust-v0.172.0/codex-x86_64-unknown-linux-musl.tar.gz
+        digest=a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392
+        ;;
     opencode)
         url=https://github.com/anomalyco/opencode/releases/download/v1.19.6/opencode-linux-x64.tar.gz
         digest=47734e08968b30cc22a0bffb6d9feeed76ad4aa743213a12122040392d09a057
@@ -35,6 +39,7 @@ for path in /bin /lib /lib64; do
     if [[ -e "$path" ]]; then args+=(--ro-bind "$path" "$path"); fi
 done
 case "$provider" in
+    codex) binary=$(find "$dest" -type f -name 'codex-x86_64-unknown-linux-musl' -print -quit); argv=("/provider/${binary#"$dest/"}") ;;
     pi) binary=$(find "$dest" -type f -name pi -print -quit); argv=("/provider/${binary#"$dest/"}" --mode rpc) ;;
     opencode) binary=$(find "$dest" -type f -name opencode -print -quit); argv=("/provider/${binary#"$dest/"}" acp) ;;
     hermes) argv=(/provider/venv/bin/python -c 'from acp_adapter.entry import main; main()') ;;
@@ -48,7 +53,7 @@ if [[ "$provider" == hermes ]]; then
     mv "$upstream" "$stage/hermes-source"
     args+=(--ro-bind "$stage/hermes-source" "$upstream")
 fi
-{
+if [[ "$provider" != codex ]]; then
     mkdir "$stage/model-runtime"
     curl --fail --location --retry 2 -o "$stage/llama.tar.gz" https://github.com/ggml-org/llama.cpp/releases/download/b12810/llama-b12810-bin-ubuntu-x64.tar.gz
     echo "63b94be37dcc34cb4933554d4f998e9649841b23da7ffc71d1f66d63762464d7  $stage/llama.tar.gz" | sha256sum --check
@@ -65,16 +70,21 @@ fi
     cp tools/local_agent_model.py "$stage/local_agent_model.py"
     args+=(--ro-bind "$stage/model-runtime" /model-runtime --ro-bind "$stage/model.gguf" /model-fixture.gguf
            --ro-bind "$stage/local_agent_model.py" /local_agent_model.py)
-}
+fi
 if [[ "$provider" == pi ]]; then
     argv+=(--model local-fixture/ocos-fixture --no-tools --no-session --no-extensions --system-prompt "Answer arithmetic briefly.")
 fi
 cp -r src "$stage/src"
-cp tools/provider_handshake.py "$stage/probe.py"
+if [[ "$provider" == codex ]]; then
+    cp tools/probe_codex_account.py "$stage/probe.py"
+else
+    cp tools/provider_handshake.py "$stage/probe.py"
+    argv=("$provider" "${argv[@]}")
+fi
 sudo -n systemd-run --quiet --expand-environment=no --wait --collect --pipe \
     -p MemoryMax=4G -p TasksMax=128 -p RuntimeMaxSec=220 -p KillMode=control-group \
     /usr/bin/bwrap --unshare-all --die-with-parent --new-session --clearenv --uid 65534 --gid 65534 \
     --cap-drop ALL "${args[@]}" --ro-bind "$stage/provider" /provider --ro-bind "$stage/src" /src \
     --ro-bind "$stage/probe.py" /probe.py --proc /proc --dev /dev --tmpfs /tmp --chdir /tmp \
     --setenv PATH /usr/bin:/bin --setenv HOME /tmp --setenv PYTHONPATH /src \
-    /usr/bin/python3 /probe.py "$provider" "${argv[@]}"
+    /usr/bin/python3 /probe.py "${argv[@]}"

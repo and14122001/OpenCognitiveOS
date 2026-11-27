@@ -190,7 +190,8 @@ class ContentAddressedEvidenceStore:
         tmp_path = self.staging_dir / tmp_name
 
         self._validate_staging()
-        fd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+        fd = os.open(str(tmp_path), flags, 0o600)
         try:
             while True:
                 chunk = stream.read(_CHUNK_SIZE)

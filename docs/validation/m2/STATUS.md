@@ -8,6 +8,8 @@
 | 可攜回歸 | 130 項，125 通過、5 跳過。這五項針對已隔離的舊 unshare 後端。正式 broker 另設原生測試。[逐項日誌](final-regression.log) |
 | Ubuntu 正式入口 | bubblewrap、cgroup v2、錯誤輸出證據、子程序逾時、獨立驗收、原子 SUCCEEDED 及重播。[Run 45984405670 / Linux job](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456206728) |
 | 三個上游程序 | Hermes 8fc03744 與 OpenCode v1.19.6 的 ACP session/new、Pi v1.6.1 的 RPC get_state。固定來源，在無網路及無憑證 namespace 內執行。[Hermes](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456207003)／[OpenCode](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456206991)／[Pi](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456207029) |
+| 上游代理文字回合 | OpenCode、Pi 在無外網 namespace 透過固定 CPU GGUF 取得回覆；Hermes 以真正 64K 以上 context 的 Qwen3.5-0.8B 完成文字回合，測量 9 個本地生成 tokens。Run 45988070964 的 Hermes job 後續於釋放模型程序超時，已修正清理流程，整個舊 job 計為失敗。 |
+| Google DirectSDK | 官方 google-genai 3.6.1，真實 SDK 送往本機合成服務。未知費用零次傳輸、核准後一次傳輸並結算 4 tokens。[本機日誌](google-sdk-loopback.log) |
 | MLX-LM | macOS arm64 原生 MLX CPU、合成小模型、真實 HTTP server 與用量結算。[Run 45983216217 / MLX job](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45983216217/job/140452225425) |
 | oMLX | 公開 macOS Runner 實際回報 Metal available=True，固定 bc55984a 的上游 oMLX 完成合成小模型推理，結算 5 tokens。[Run 45985437591 / oMLX](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45985437591/job/140459728648) |
 | 跨主機還原 | 原生 Linux fixture 的 SQLite 與 CAS 傳至另一台 macOS 標準 Runner，從 CI job output 取得獨立 SHA，還原後重播原始成功收據。[Run 45985437591 / restore job](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45985437591/job/140459808508) |
