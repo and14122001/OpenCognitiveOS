@@ -54,7 +54,7 @@
 | S28 | Linux 真實子程序逾時及終止、非零結果留存；R4 CAS 跨程序容量、去重及重驗 | 未知 unit 狀態持續保留供對帳 |
 | S29 | 唯讀獨立驗證固定 Git blob、環境與 Manifest | 可執行任意專案測試套件的獨立驗收器 |
 | S30 | 兩把獨立信任金鑰、簽章與 SHA 重驗、CAS 損毀拒絕、狀態／收據／Outbox 交易回滾、重播 | 完整工具鏈與目標設備驗收 |
-| S31–42 | Hermes 與 OpenCode 實際 ACP initialize、session/new；Pi RPC get_state；Apple arm64 MLX CPU 與 MLX-LM HTTP 完成和用量結算 | 完整代理推理與取消、oMLX 本體、目標設備模型比較 |
+| S31–42 | Hermes 與 OpenCode 實際 ACP initialize、session/new；Pi RPC get_state；Apple arm64 MLX CPU、MLX-LM 與 oMLX 原生 HTTP 生成及用量結算 | 完整代理推理與取消、目標設備模型比較 |
 | S43–48 | 零成本任務授權、資料分類、共池、保留與結算；DirectSDK 模擬傳輸 | 真實 agy、DirectSDK、Codex OAuth 與帳戶零成本權益 |
 | S49–54 | DAG 前置依賴、深度 3／分支 3、父額度共享；可重播證據圖與矛盾邊 | 完整世界模型與端對端多代理協作 |
 | S55–60 | Linux 原生工作證據在另一台 macOS 主機還原並重播、版本化發布與回滾、配對小模型實測；文字／PCM／RGB 附件契約及快照 | 真實影音模型輸入、目標設備災難復原與七天耐久 |

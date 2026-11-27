@@ -27,7 +27,8 @@ class NativeWorker(unittest.TestCase):
             repo.mkdir()
             subprocess.run(["git","init","-q",str(repo)],check=True)
             (repo/"script.py").write_text(source)
-            subprocess.run(["git","-C",str(repo),"add","script.py"],check=True)
+            (repo/"verify.py").write_text("import pathlib,sys\nassert pathlib.Path(sys.argv[1]).read_bytes() == b'works\\n'")
+            subprocess.run(["git","-C",str(repo),"add","script.py","verify.py"],check=True)
             subprocess.run(["git","-C",str(repo),"-c","user.name=Test","-c","user.email=test@local",
                             "commit","-qm","fixture"],check=True)
             sha = subprocess.check_output(["git","-C",str(repo),"rev-parse","HEAD"],text=True).strip()
@@ -52,7 +53,7 @@ class NativeWorker(unittest.TestCase):
                            budget=Budget(max_retries=0, max_steps=2))
             rec,_ = auth.submit_task(spec)
             acceptance = AcceptanceSpec("p","r",spec.unique_key,sha,policy,"verifier",
-                    {"command":"verify-file script.py","min_pass":1,"worker_script":"script.py"},auth.clock.now_iso())
+                    {"command":"verify-python verify.py","min_pass":1,"worker_script":"script.py"},auth.clock.now_iso())
             reg.register_spec(acceptance,task_spec=spec,capability=cap)
             for status in (TaskStatus.PLANNED,TaskStatus.READY):
                 rec = auth.transition_task(spec.unique_key,status,expected_revision=rec.revision,actor_role="controller", controller_capability=auth._controller_capability)
@@ -107,6 +108,11 @@ print(Path('result').read_text())
 """, 10)
         self.assertEqual(result.exit_code,0,result.stdout)
         self.assertIn("works",result.stdout)
+
+    def test_independent_verifier_rejects_incorrect_output(self):
+        from opencognitiveos.errors import VerificationFailedError
+        with self.assertRaisesRegex(VerificationFailedError, "Independent Python check failed"):
+            self.run_candidate("print('incorrect')", 10)
 
     def test_failure_retains_evidence(self):
         result = self.run_candidate("print('failed check', flush=True)\nraise SystemExit(3)", 10)

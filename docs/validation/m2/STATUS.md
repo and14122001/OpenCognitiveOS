@@ -9,6 +9,7 @@
 | Ubuntu 正式入口 | bubblewrap、cgroup v2、錯誤輸出證據、子程序逾時、獨立驗收、原子 SUCCEEDED 及重播。[Run 45984405670 / Linux job](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456206728) |
 | 三個上游程序 | Hermes 8fc03744 與 OpenCode v1.19.6 的 ACP session/new、Pi v1.6.1 的 RPC get_state。固定來源，在無網路及無憑證 namespace 內執行。[Hermes](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456207003)／[OpenCode](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456206991)／[Pi](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456207029) |
 | MLX-LM | macOS arm64 原生 MLX CPU、合成小模型、真實 HTTP server 與用量結算。[Run 45983216217 / MLX job](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45983216217/job/140452225425) |
+| oMLX | 公開 macOS Runner 實際回報 Metal available=True，固定 bc55984a 的上游 oMLX 完成合成小模型推理，結算 5 tokens。[Run 45985437591 / oMLX](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45985437591/job/140459728648) |
 | 跨主機還原 | 原生 Linux fixture 的 SQLite 與 CAS 傳至另一台 macOS 標準 Runner，從 CI job output 取得獨立 SHA，還原後重播原始成功收據。[Run 45985437591 / restore job](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45985437591/job/140459808508) |
 | 實驗 | 公開 SmolLM2 CPU 浮現輸出格式地板效應。實驗室結果禁止升級。[預註冊與逐筆結果](../ab/README.md) |
 
