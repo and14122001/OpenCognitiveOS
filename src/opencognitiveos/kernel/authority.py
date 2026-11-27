@@ -101,6 +101,7 @@ class ExecutionAuthority:
         policy_gate: PolicyGate | None = None,
         verifier: IndependentVerifier | None = None,
     ) -> None:
+        self.evidence_completion = None
         self.store = store
         self.clock: Clock = clock or store.clock or SystemClock()
         self.policy_gate = policy_gate or PolicyGate()
@@ -345,7 +346,20 @@ class ExecutionAuthority:
             )
             output_payload = json.loads(v_row["output_payload_json"])
             effects = json.loads(v_row["effects_snapshot_json"])
+            if not self._replay_sealed(conn, spec, receipt, output_payload):
+                return False
         return IndependentVerifier.replay_verify(receipt, spec, effects=effects, output_payload=output_payload)
+
+    def _replay_sealed(self, conn, spec, receipt, output_payload):
+        binding = output_payload.get("verified_evidence") if isinstance(output_payload, dict) else None
+        if binding is None:
+            return spec.base_sha == "HEAD"
+        if self.evidence_completion is None or not isinstance(binding, dict):
+            return False
+        try:
+            return self.evidence_completion.replay(conn, spec, binding, receipt.execution_id, receipt.epoch)
+        except (VerificationFailedError, KeyError, ValueError, TypeError, OSError, sqlite3.Error):
+            return False
 
     def audit_database_consistency(self, unique_key: str) -> dict[str, Any]:
         """Single-transaction cross-table consistency audit (NOT defense against full-DB-write attackers)."""
@@ -395,7 +409,7 @@ class ExecutionAuthority:
                 except (TypeError, ValueError) as exc:
                     raise DatabaseIntegrityError(f"Corrupt verification_receipts JSON for '{unique_key}': {exc}") from exc
 
-                if not IndependentVerifier.replay_verify(
+                if not self._replay_sealed(conn, spec, receipt, output_payload) or not IndependentVerifier.replay_verify(
                     receipt, spec, effects=snapshot_effects, output_payload=output_payload
                 ):
                     raise DatabaseIntegrityError(f"Historical snapshot replay failed for '{unique_key}'.")
@@ -721,6 +735,7 @@ class ExecutionAuthority:
         execution_id: str,
         epoch: int,
         expected_revision: int,
+        evidence_id: str | None = None,
         verifier: IndependentVerifier | None = None,
         output_payload: dict[str, Any] | None = None,
         before_commit_hook: Callable[[sqlite3.Connection], None] | None = None,
@@ -749,14 +764,15 @@ class ExecutionAuthority:
             workspace_table = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces'"
             ).fetchone()
-            if workspace_table and conn.execute(
+            has_workspace = workspace_table and conn.execute(
                 "SELECT 1 FROM workspaces WHERE task_unique_key=?", (unique_key,)
-            ).fetchone():
-                raise VerificationFailedError("Worktree execution requires trusted evidence completion.")
-            if registry_exists and conn.execute(
-                "SELECT 1 FROM acceptance_specs WHERE task_unique_key = ?", (unique_key,)
-            ).fetchone():
-                raise VerificationFailedError("R4 trusted evidence completion is not enabled; legacy completion denied.")
+            ).fetchone()
+            registered = registry_exists and conn.execute(
+                "SELECT 1 FROM acceptance_specs WHERE task_unique_key=?", (unique_key,)
+            ).fetchone()
+            governed = has_workspace or registered or spec.base_sha != "HEAD" or evidence_id is not None
+            if governed and (not has_workspace or not registered or not evidence_id or self.evidence_completion is None):
+                raise VerificationFailedError("Governed completion requires a trusted manifest and workspace; legacy completion denied.")
 
             if current_status != TaskStatus.VERIFYING:
                 raise InvalidTransitionError(
@@ -791,6 +807,14 @@ class ExecutionAuthority:
                 (execution_id, unique_key, execution_id, current_epoch, execution_id),
             ).fetchall()
             effects = [dict(r) for r in eff_rows]
+
+            if isinstance(output_payload, dict) and "verified_evidence" in output_payload:
+                raise VerificationFailedError("Evidence bindings are reserved for the controller.")
+            if governed:
+                if self.evidence_completion.manager.authority is not self:
+                    raise VerificationFailedError("Wrong workspace authority.")
+                binding = self.evidence_completion.verify(conn, spec, evidence_id, worker_id, execution_id, epoch)
+                output_payload = {**(output_payload or {}), "verified_evidence": binding}
 
             v_receipt = self.verifier.verify(
                 spec,

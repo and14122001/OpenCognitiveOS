@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import secrets
 import subprocess
 import tempfile
 import threading
@@ -63,14 +64,17 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         self.store = SQLiteStore(self.db_path, clock=self.clock)
         self.store.migrate()
         self.auth = ExecutionAuthority(self.store, clock=self.clock)
+        self.spec_key = secrets.token_bytes(32)
+        self.manifest_key = secrets.token_bytes(32)
         self.controller_capability = object()
-        self.acceptance_reg = AcceptanceSpecRegistry(self.auth, clock=self.clock, controller_capability=self.controller_capability)
+        self.acceptance_reg = AcceptanceSpecRegistry(self.auth, clock=self.clock, controller_capability=self.controller_capability, signing_key=self.spec_key)
         self.evidence_store = ContentAddressedEvidenceStore(self.base / "cas", clock=self.clock)
         self.verifier_capability = object()
         self.manifest_reg = EvidenceManifestRegistry(
             authority=self.auth,
             acceptance_registry=self.acceptance_reg,
             verifier_capability=self.verifier_capability,
+            signing_key=self.manifest_key,
             evidence_store=self.evidence_store,
             clock=self.clock,
         )
@@ -430,6 +434,55 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         for role in ("controller", "verifier"):
             with self.assertRaises(PolicyDeniedError):
                 self.acceptance_reg.register_spec(spec, task_spec=task, actor_role=role)
+
+    def test_sealed_completion_rolls_back_and_replays(self):
+        from dataclasses import replace
+        from opencognitiveos.contracts.models import EffectOutcome, EffectReceipt
+        from opencognitiveos.execution.worktree import WorkspaceManager
+        from opencognitiveos.providers.mock_provider import MockProvider
+        from opencognitiveos.verification.completion import EvidenceCompletion
+
+        task, spec, _ = self._make_task_and_spec("sealed", start_task=False)
+        manager = WorkspaceManager(authority=self.auth, repo_path=self.repo_dir, workspaces_root=self.base / "trees")
+        ws = manager.create_workspace(workspace_id="ws", repo_id=task.repo_id, task_id=task.task_id, base_sha=self.base_sha)
+        lease = self.auth.acquire_lease(task.unique_key, worker_id="w")
+        fence = dict(worker_id="w", execution_id=lease.execution_id, epoch=lease.fencing_epoch)
+        rec = self.auth.get_task(task.unique_key)
+        rec = self.auth.transition_task(task.unique_key, TaskStatus.RUNNING, expected_revision=rec.revision, **fence)
+        output = MockProvider().infer({"run_id": lease.execution_id, "goal": task.goal, "tool": "mock.echo"})
+        sub = self.auth.record_tool_intent(task.unique_key, tool="mock.echo", args=output["proposed_args"], **fence)
+        self.auth.record_effect_receipt(task.unique_key, EffectReceipt(sub.intent.intent_id, EffectOutcome.SUCCEEDED,
+                                       "fixture", "fixture"), **fence)
+        rec = self.auth.transition_task(task.unique_key, TaskStatus.VERIFYING, expected_revision=rec.revision, **fence)
+        wt = Path(ws.worktree_path)
+        git = capture_trusted_git_state(wt, base_sha=self.base_sha, evidence_store=self.evidence_store)
+        # Synthetic attestation exercises the commit protocol; native OS acceptance is a separate CI job.
+        env = ExecutionEnvironmentRecord.capture(repo_root=wt, sandbox_backend="linux-bwrap", sandbox_version="fixture",
+                    test_command=spec.criteria["command"], exit_code=0, passed_count=1, failed_count=0, skipped_count=0)
+        log = self.evidence_store.store_bytes(b"fixture verifier log", kind=EvidenceKind.EXECUTION_LOG)
+        manifest = self.manifest_reg.create_and_persist_manifest(task_spec=task, worker_id="w",
+                    execution_id=lease.execution_id, fencing_epoch=lease.fencing_epoch, workspace_id="ws", git_state=git,
+                    environment=env, artifact_hashes={"test_log": log.digest}, verifier_id=spec.verifier_id,
+                    capability=self.verifier_capability)
+        gate = EvidenceCompletion(manager, self.evidence_store, self.spec_key, self.manifest_key, self.policy_hash)
+        kwargs = dict(**fence, expected_revision=rec.revision, output_payload=output, evidence_id=manifest.evidence_id)
+        self.auth.evidence_completion = replace(gate, verifier_key=secrets.token_bytes(32))
+        with self.assertRaises(VerificationFailedError):
+            self.auth.verify_and_complete(task.unique_key, **kwargs)
+        self.auth.evidence_completion = gate
+        def interrupt(_conn):
+            raise RuntimeError("interrupted")
+        with self.assertRaisesRegex(RuntimeError, "interrupted"):
+            self.auth.verify_and_complete(task.unique_key, before_commit_hook=interrupt, **kwargs)
+        self.assertEqual(self.auth.get_task(task.unique_key).status, TaskStatus.VERIFYING)
+        with self.store.open_connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM verification_receipts").fetchone()[0], 0)
+        final, _ = self.auth.verify_and_complete(task.unique_key, **kwargs)
+        self.assertEqual(final.status, TaskStatus.SUCCEEDED)
+        self.assertTrue(self.auth.replay_verification(task.unique_key))
+        self.assertTrue(self.auth.audit_database_consistency(task.unique_key)["ok"])
+        (self.base / "cas" / log.relative_path).unlink()
+        self.assertFalse(self.auth.replay_verification(task.unique_key))
 
     def test_r4_legacy_completion_denied(self):
         task, _, _ = self._make_task_and_spec("legacy-bypass", start_task=False)

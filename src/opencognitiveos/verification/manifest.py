@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from opencognitiveos.verification.seals import seal
 from opencognitiveos.contracts.models import (
     Clock,
     TaskSpec,
@@ -340,9 +341,11 @@ class EvidenceManifestRegistry:
         acceptance_registry: AcceptanceSpecRegistry,
         evidence_store: ContentAddressedEvidenceStore,
         verifier_capability: object | None = None,
+        signing_key: bytes | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._verifier_capability = verifier_capability if verifier_capability is not None else object()
+        self._signing_key = signing_key
         self.authority = authority
         self.store = authority.store
         self.acceptance_registry = acceptance_registry
@@ -352,6 +355,7 @@ class EvidenceManifestRegistry:
 
     def _ensure_schema(self) -> None:
         with self.store.transaction() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS manifest_seals (digest TEXT PRIMARY KEY, tag TEXT NOT NULL)")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS evidence_manifests (
@@ -476,6 +480,8 @@ class EvidenceManifestRegistry:
                     manifest.created_at_utc,
                 ),
             )
+            if self._signing_key is not None:
+                conn.execute("INSERT INTO manifest_seals VALUES (?,?)", (manifest_hash, seal(self._signing_key, "manifest", manifest_hash)))
         return manifest
 
     def _load_spec_unchecked_policy(self, task_spec: TaskSpec, verifier_id: str):

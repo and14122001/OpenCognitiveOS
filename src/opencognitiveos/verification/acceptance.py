@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from opencognitiveos.verification.seals import seal
 from opencognitiveos.contracts.models import (
     Clock,
     SystemClock,
@@ -103,8 +104,9 @@ class AcceptanceSpec:
 class AcceptanceSpecRegistry:
     """Controller-managed SQLite store for immutable AcceptanceSpecs (S26)."""
 
-    def __init__(self, authority: ExecutionAuthority, clock: Clock | None = None, *, controller_capability: object | None = None) -> None:
+    def __init__(self, authority: ExecutionAuthority, clock: Clock | None = None, *, controller_capability: object | None = None, signing_key: bytes | None = None) -> None:
         self._controller_capability = controller_capability if controller_capability is not None else object()
+        self._signing_key = signing_key
         self.authority = authority
         self.store = authority.store
         self.clock: Clock = clock or authority.clock
@@ -112,6 +114,7 @@ class AcceptanceSpecRegistry:
 
     def _ensure_schema(self) -> None:
         with self.store.transaction() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS acceptance_seals (digest TEXT PRIMARY KEY, tag TEXT NOT NULL)")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS acceptance_specs (
@@ -211,6 +214,8 @@ class AcceptanceSpecRegistry:
                     spec.expires_at_utc,
                 ),
             )
+            if self._signing_key is not None:
+                conn.execute("INSERT INTO acceptance_seals VALUES (?,?)", (spec_hash, seal(self._signing_key, "spec", spec_hash)))
         return spec_hash
 
     def load_and_verify_spec(
