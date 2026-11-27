@@ -21,7 +21,7 @@ case "$provider" in
         /usr/bin/python3 -m venv "$RUNNER_TEMP/resolver"
         "$RUNNER_TEMP/resolver/bin/pip" install 'uv==0.11.2'
         UV_PROJECT_ENVIRONMENT="$dest/venv" "$RUNNER_TEMP/resolver/bin/uv" sync --project "$upstream" \
-            --python /usr/bin/python3 --no-dev --no-editable --extra acp --frozen
+            --python /usr/bin/python3 --no-dev --extra acp --frozen
         ;;
     *) exit 2 ;;
 esac
@@ -44,6 +44,10 @@ stage=$(mktemp -d /tmp/ocos-provider.XXXXXXXX)
 trap 'rm -rf -- "$stage"' EXIT
 chmod 0755 "$stage"
 mv "$dest" "$stage/provider"
+if [[ "$provider" == hermes ]]; then
+    mv "$upstream" "$stage/hermes-source"
+    args+=(--ro-bind "$stage/hermes-source" "$upstream")
+fi
 cp -r src "$stage/src"
 cp tools/provider_handshake.py "$stage/probe.py"
 sudo -n systemd-run --quiet --expand-environment=no --wait --collect --pipe \

@@ -28,6 +28,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit-consistency", help="Audit cross-table DB consistency for a task.")
     p_audit.add_argument("--unique-key", required=True)
 
+    replay = sub.add_parser("replay-evidence", help="Replay the sealed receipt and referenced CAS evidence.")
+    complete = sub.add_parser("complete-evidence", help="Atomically verify and commit a governed task.")
+    for command in (replay, complete):
+        command.add_argument("--config", required=True, help="Canonical path to operator-owned mode-0600 configuration.")
+        command.add_argument("--unique-key", required=True)
+    complete.add_argument("--worker", required=True)
+    complete.add_argument("--execution", required=True)
+    complete.add_argument("--epoch", type=int, required=True)
+    complete.add_argument("--revision", type=int, required=True)
+    complete.add_argument("--manifest", required=True)
+    complete.add_argument("--output", required=True, help="Path to worker output JSON.")
+
     p_run = sub.add_parser("run-mock", help="Submit and run a task offline using MockProvider.")
     p_run.add_argument("--project-id", default="default-project")
     p_run.add_argument("--repo-id", required=True)
@@ -117,6 +129,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     store.migrate()
     authority = ExecutionAuthority(store, clock=clock)
+
+    if args.command in ("complete-evidence", "replay-evidence"):
+        from opencognitiveos.verification.bootstrap import configure_evidence
+        configure_evidence(authority, args.config)
+        if args.command == "replay-evidence":
+            valid = authority.replay_verification(args.unique_key)
+            print(json.dumps({"valid": valid}))
+            return 0 if valid else 1
+        task, receipt = authority.verify_and_complete(args.unique_key, evidence_id=args.manifest,
+                    expected_revision=args.revision, worker_id=args.worker, execution_id=args.execution,
+                    epoch=args.epoch, output_payload=json.loads(Path(args.output).read_text(encoding="utf-8")))
+        print(json.dumps({"status": task.status.value, "receipt": receipt.verification_id}))
+        return 0
 
     if args.command == "run-mock":
         spec = TaskSpec(

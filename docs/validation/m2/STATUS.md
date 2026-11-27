@@ -22,3 +22,5 @@
 | Pi RPC | github.com/earendil-works/pi，MIT，ef4a1cfcca62b77ad3558337ff3e1c7f6beeadfe | 固定 v1.6.1 Linux release SHA256，CI 獨立測試 get_state。 |
 
 Run 45980031044 的 Ubuntu 固定檔案驗收、OpenCode ACP 與 Pi RPC 通過。Hermes 原始 pip 安裝遇到上游 Pillow 固定版本衝突，後續依固定原始碼的 uv.lock 重跑。推理槽與根任務 token 共池由 SQLite 跨重啟保留，未確認推理停止時禁止重用。MLX/oMLX 的 loopback HTTP 行為經本機協定測試；macOS 公開 Runner 另執行小型隨機權重 Llama 原生 MLX 運算。
+
+Run 45980639212 的 hosted macOS 原生 MLX CPU 測試通過。Hermes 固定版本要求 editable 安裝，後續測試沿用上游 lock 並唯讀掛載固定來源。新增 complete-evidence、replay-evidence、版本化模型設定升級與回滾。DirectSDK adapter 僅在已配置受信任報價、PUBLIC 任務及零成本保證時可進入傳輸；本輪不使用個人憑證或雲端推理。

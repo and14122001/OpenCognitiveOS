@@ -496,6 +496,20 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         self.assertEqual(final.status, TaskStatus.SUCCEEDED)
         self.assertTrue(self.auth.replay_verification(task.unique_key))
         self.assertTrue(self.auth.audit_database_consistency(task.unique_key)["ok"])
+        if os.name == "posix":
+            from opencognitiveos.interfaces.cli import main
+            config = dict(repo=str(self.repo_dir), workspaces=str(self.base / "trees"),
+                          cas=str(self.base / "cas"), policy_hash=self.policy_hash)
+            for name, key in (("controller", self.spec_key), ("verifier", self.manifest_key)):
+                path = (self.base / name).resolve()
+                path.write_bytes(key)
+                path.chmod(0o600)
+                config[name + "_key_file"] = str(path)
+            path = (self.base / "config.json").resolve()
+            path.write_text(json.dumps(config), encoding="utf-8")
+            path.chmod(0o600)
+            self.assertEqual(main(["--db", str(self.db_path), "replay-evidence", "--unique-key", task.unique_key,
+                                   "--config", str(path)]), 0)
         from opencognitiveos.storage.evidence_backup import export_snapshot, restore_snapshot
         snapshot = self.base / "backup"
         restored = self.base / "restored"

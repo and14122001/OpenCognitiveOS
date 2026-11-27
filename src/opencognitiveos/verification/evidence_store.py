@@ -93,13 +93,19 @@ class ContentAddressedEvidenceStore:
     ) -> None:
         if max_object_bytes <= 0 or max_total_bytes < max_object_bytes:
             raise ValueError("Invalid evidence store capacity limits.")
-        self.root_dir = Path(root_dir).resolve(strict=False)
-        self.root_dir.mkdir(parents=True, exist_ok=True)
+        supplied = Path(root_dir)
+        if supplied.exists() or supplied.is_symlink():
+            _assert_safe_node(supplied)
+        self.root_dir = supplied.resolve(strict=False)
+        self.root_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.root_dir = self.root_dir.resolve(strict=True)
         self.evidence_root = self.root_dir / "evidence" / "sha256"
         self.staging_dir = self.root_dir / "evidence" / ".staging"
-        self.evidence_root.mkdir(parents=True, exist_ok=True)
-        self.staging_dir.mkdir(parents=True, exist_ok=True)
+        for directory in (self.root_dir / "evidence", self.evidence_root, self.staging_dir):
+            directory.mkdir(mode=0o700, exist_ok=True)
+            _assert_safe_node(directory)
+            if not directory.is_dir():
+                raise EvidenceIntegrityError("Evidence hierarchy requires a directory.")
         self.max_object_bytes = int(max_object_bytes)
         self.max_total_bytes = int(max_total_bytes)
         self.clock: Clock = clock or SystemClock()
@@ -114,7 +120,6 @@ class ContentAddressedEvidenceStore:
         with closing(sqlite3.connect(self._lock_path, timeout=30)) as lock:
             lock.execute("BEGIN IMMEDIATE")
             yield
-
 
     @staticmethod
     def validate_digest(digest: str) -> str:
@@ -219,12 +224,11 @@ class ContentAddressedEvidenceStore:
         if target.exists():
             _assert_safe_node(target)
             # Re-verify existing content before deduplicating
-            existing_digest = self._hash_file(target)
-            if existing_digest != digest:
+            try:
+                self.read_bytes(digest)
+            except Exception:
                 tmp_path.unlink(missing_ok=True)
-                raise EvidenceIntegrityError(
-                    f"Existing evidence at '{digest}' failed integrity check (got {existing_digest})."
-                )
+                raise
             tmp_path.unlink(missing_ok=True)
             return StoredEvidenceRecord(
                 digest=digest,
@@ -260,40 +264,26 @@ class ContentAddressedEvidenceStore:
             created_at_utc=self.clock.now_iso(),
         )
 
-    @staticmethod
-    def _hash_file(path: Path) -> str:
-        _assert_safe_node(path)
-        hasher = hashlib.sha256()
-        with path.open("rb") as fh:
-            while True:
-                chunk = fh.read(_CHUNK_SIZE)
-                if not chunk:
-                    break
-                hasher.update(chunk)
-        return hasher.hexdigest()
-
     def read_bytes(self, digest: str) -> bytes:
         target = self._safe_object_path(digest)
         if not target.is_file():
             raise EvidenceIntegrityError(f"Evidence digest '{digest}' not found.")
-        _assert_safe_node(target)
-        data = target.read_bytes()
-        actual = hashlib.sha256(data).hexdigest()
-        if actual != digest:
-            raise EvidenceIntegrityError(
-                f"Evidence content corrupted or replaced for '{digest}' (actual {actual})."
-            )
+        before = target.lstat()
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(target, flags), "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (not os.path.samestat(before, opened) or not stat.S_ISREG(opened.st_mode)
+                    or opened.st_nlink != 1 or opened.st_size > self.max_object_bytes):
+                raise EvidenceIntegrityError("Unsafe or oversized evidence file.")
+            data = stream.read(self.max_object_bytes + 1)
+        if len(data) > self.max_object_bytes or hashlib.sha256(data).hexdigest() != digest:
+            raise EvidenceIntegrityError(f"Evidence hash mismatch for '{digest}'.")
         return data
 
     def verify_digest(self, digest: str) -> bool:
-        target = self._safe_object_path(digest)
-        if not target.is_file():
+        if not self._safe_object_path(digest).is_file():
             return False
-        actual = self._hash_file(target)
-        if actual != digest:
-            raise EvidenceIntegrityError(
-                f"Evidence hash mismatch for '{digest}' (actual {actual})."
-            )
+        self.read_bytes(digest)
         return True
 
     def _validate_staging(self) -> None:

@@ -26,6 +26,25 @@ class CloudQuotaLedger:
                 PRIMARY KEY(task,request_id),
                 FOREIGN KEY(task,provider) REFERENCES cloud_grants(task,provider))""")
 
+            conn.execute("""CREATE TABLE IF NOT EXISTS cloud_usage (
+                task TEXT NOT NULL, request_id TEXT NOT NULL, actual INTEGER NOT NULL,
+                PRIMARY KEY(task,request_id), FOREIGN KEY(task,request_id)
+                REFERENCES cloud_reservations(task,request_id))""")
+
+    def settle(self, *, capability, task, request_id, actual_tokens):
+        if capability is not self._capability or type(actual_tokens) is not int or actual_tokens < 0:
+            raise PolicyDeniedError("Unknown cloud usage remains fully reserved.")
+        with self.authority.store.transaction() as conn:
+            row = conn.execute("SELECT tokens FROM cloud_reservations WHERE task=? AND request_id=?",
+                               (task, request_id)).fetchone()
+            if row is None or actual_tokens > row["tokens"]:
+                raise BudgetExceededError("Cloud usage exceeds known reservation.")
+            conn.execute("INSERT OR IGNORE INTO cloud_usage VALUES (?,?,?)", (task,request_id,actual_tokens))
+            stored = conn.execute("SELECT actual FROM cloud_usage WHERE task=? AND request_id=?",
+                                  (task,request_id)).fetchone()[0]
+            if stored != actual_tokens:
+                raise PolicyDeniedError("Conflicting cloud settlement.")
+
     def grant(self, *, capability, task, provider, pool, pool_tokens, task_tokens, expires):
         if capability is not self._capability:
             raise PolicyDeniedError("Cloud approval requires controller authority.")
@@ -71,10 +90,10 @@ class CloudQuotaLedger:
                 if tuple(old) != (provider, max_tokens, execution_id, epoch):
                     raise PolicyDeniedError("Conflicting reservation replay.")
                 return False
-            totals = conn.execute("""SELECT COALESCE(SUM(r.tokens),0),
-                COALESCE(SUM(CASE WHEN r.task=? AND r.provider=? THEN r.tokens ELSE 0 END),0)
+            totals = conn.execute("""SELECT COALESCE(SUM(COALESCE(u.actual,r.tokens)),0),
+                COALESCE(SUM(CASE WHEN r.task=? AND r.provider=? THEN COALESCE(u.actual,r.tokens) ELSE 0 END),0)
                 FROM cloud_reservations r JOIN cloud_grants g ON g.task=r.task AND g.provider=r.provider
-                WHERE g.pool=?""", (task, provider, row["pool"])).fetchone()
+                LEFT JOIN cloud_usage u ON u.task=r.task AND u.request_id=r.request_id WHERE g.pool=?""", (task, provider, row["pool"])).fetchone()
             if totals[0]+max_tokens > row["capacity"] or totals[1]+max_tokens > row["token_limit"]:
                 raise BudgetExceededError("Cloud quota exhausted.")
             conn.execute("INSERT INTO cloud_reservations VALUES (?,?,?,?,?,?)",
