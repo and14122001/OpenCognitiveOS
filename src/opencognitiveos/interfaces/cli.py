@@ -20,7 +20,7 @@ from opencognitiveos.verification.verifier import IndependentVerifier
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="opencognitiveos", description="OpenCognitiveOS M0-M1.6 CLI")
     parser.add_argument("--version", action="version", version=f"opencognitiveos {__version__}")
-    parser.add_argument("--db", required=True, help="Path to SQLite database file.")
+    parser.add_argument("--db", help="Path to SQLite database file.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init-db", help="Run SQLite migrations and integrity check.")
@@ -47,6 +47,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_backup = sub.add_parser("backup", help="Create consistent SQLite backup.")
     p_backup.add_argument("--dest", required=True)
 
+    benchmark = sub.add_parser("compare-benchmark", help="Compare paired offline observations against a pinned plan.")
+    benchmark.add_argument("--plan", required=True)
+    benchmark.add_argument("--sha256", required=True)
+    benchmark.add_argument("--observations", required=True)
+    bundle = sub.add_parser("backup-evidence", help="Publish a database and referenced CAS snapshot.")
+    bundle.add_argument("--cas", required=True)
+    bundle.add_argument("--dest", required=True)
+    restore_bundle = sub.add_parser("restore-evidence", help="Restore a verified snapshot into a new directory.")
+    restore_bundle.add_argument("--source", required=True)
+    restore_bundle.add_argument("--sha256", required=True)
+    restore_bundle.add_argument("--dest", required=True)
+
     p_restore = sub.add_parser("restore", help="Restore a verified SQLite backup to --db.")
     p_restore.add_argument("--source", required=True)
 
@@ -62,7 +74,26 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "compare-benchmark":
+        from opencognitiveos.verification.benchmark import compare
+        rows = json.loads(Path(args.observations).read_text(encoding="utf-8"))
+        print(json.dumps(compare(args.plan, args.sha256, rows), ensure_ascii=False))
+        return 0
+    if not args.db and args.command != "restore-evidence":
+        parser.error("--db is required for this command")
     clock = SystemClock()
+    if args.command in {"backup-evidence", "restore-evidence"}:
+        from opencognitiveos.storage.evidence_backup import export_snapshot, restore_snapshot
+        from opencognitiveos.verification.evidence_store import ContentAddressedEvidenceStore
+
+        if args.command == "restore-evidence":
+            restore_snapshot(args.source, args.dest, args.sha256)
+            print(json.dumps({"restored": args.dest}))
+        else:
+            db = SQLiteStore(Path(args.db).resolve(strict=True), clock=clock)
+            digest = export_snapshot(db, ContentAddressedEvidenceStore(Path(args.cas).resolve(strict=True)), args.dest)
+            print(json.dumps({"snapshot": args.dest, "manifest_sha256": digest}))
+        return 0
     if args.command == "restore":
         restored = SQLiteStore.restore_from(args.source, args.db, clock=clock)
         print(json.dumps(restored.integrity_check()))

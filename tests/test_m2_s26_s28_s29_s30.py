@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import secrets
 import subprocess
 import tempfile
@@ -19,6 +20,7 @@ from opencognitiveos.contracts.models import (
     canonical_json_hash,
 )
 from opencognitiveos.errors import (
+    DatabaseIntegrityError,
     InvalidTransitionError,
     LeaseExpiredError,
     PolicyDeniedError,
@@ -91,6 +93,7 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         verifier_id: str = "verifier-trusted-01",
         expires_at_utc: str | None = None,
         start_task: bool = True,
+        command: str = "python3 -m unittest",
     ) -> tuple[TaskSpec, AcceptanceSpec, str]:
         task_spec = TaskSpec(
             project_id=project_id,
@@ -111,7 +114,7 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
             base_sha=self.base_sha,
             policy_hash=self.policy_hash,
             verifier_id=verifier_id,
-            criteria={"command": "python3 -m unittest", "min_pass": 1},
+            criteria={"command": command, "min_pass": 1},
             created_at_utc=self.clock.now_iso(),
             expires_at_utc=expires_at_utc,
         )
@@ -442,7 +445,9 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         from opencognitiveos.providers.mock_provider import MockProvider
         from opencognitiveos.verification.completion import EvidenceCompletion
 
-        task, spec, _ = self._make_task_and_spec("sealed", start_task=False)
+        native = os.environ.get("OCOS_NATIVE_SEALED_TEST") == "1"
+        command = "verify_linux_isolation.sh app.py" if native else "fixture verifier"
+        task, spec, _ = self._make_task_and_spec("sealed", start_task=False, command=command)
         manager = WorkspaceManager(authority=self.auth, repo_path=self.repo_dir, workspaces_root=self.base / "trees")
         ws = manager.create_workspace(workspace_id="ws", repo_id=task.repo_id, task_id=task.task_id, base_sha=self.base_sha)
         lease = self.auth.acquire_lease(task.unique_key, worker_id="w")
@@ -456,10 +461,20 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         rec = self.auth.transition_task(task.unique_key, TaskStatus.VERIFYING, expected_revision=rec.revision, **fence)
         wt = Path(ws.worktree_path)
         git = capture_trusted_git_state(wt, base_sha=self.base_sha, evidence_store=self.evidence_store)
-        # Synthetic attestation exercises the commit protocol; native OS acceptance is a separate CI job.
-        env = ExecutionEnvironmentRecord.capture(repo_root=wt, sandbox_backend="linux-bwrap", sandbox_version="fixture",
+        report = b"fixture verifier log"
+        version = "fixture"
+        if native:
+            script = Path(__file__).resolve().parents[1] / "tools" / "verify_linux_isolation.sh"
+            expected = subprocess.check_output(["git", "-C", str(self.repo_dir), "show", self.base_sha + ":app.py"])
+            digest = hashlib.sha256(expected).hexdigest()
+            report = subprocess.check_output(["bash", str(script), str(wt / "app.py"), digest],
+                                             stderr=subprocess.STDOUT, timeout=45)
+            self.assertIn(("verified candidate blob " + digest).encode(), report)
+            version = subprocess.check_output(["bwrap", "--version"], text=True).strip()
+            print(report.decode(), flush=True)
+        env = ExecutionEnvironmentRecord.capture(repo_root=wt, sandbox_backend="linux-bwrap", sandbox_version=version,
                     test_command=spec.criteria["command"], exit_code=0, passed_count=1, failed_count=0, skipped_count=0)
-        log = self.evidence_store.store_bytes(b"fixture verifier log", kind=EvidenceKind.EXECUTION_LOG)
+        log = self.evidence_store.store_bytes(report, kind=EvidenceKind.EXECUTION_LOG)
         manifest = self.manifest_reg.create_and_persist_manifest(task_spec=task, worker_id="w",
                     execution_id=lease.execution_id, fencing_epoch=lease.fencing_epoch, workspace_id="ws", git_state=git,
                     environment=env, artifact_hashes={"test_log": log.digest}, verifier_id=spec.verifier_id,
@@ -481,6 +496,18 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
         self.assertEqual(final.status, TaskStatus.SUCCEEDED)
         self.assertTrue(self.auth.replay_verification(task.unique_key))
         self.assertTrue(self.auth.audit_database_consistency(task.unique_key)["ok"])
+        from opencognitiveos.storage.evidence_backup import export_snapshot, restore_snapshot
+        snapshot = self.base / "backup"
+        restored = self.base / "restored"
+        pin = export_snapshot(self.store, self.evidence_store, snapshot)
+        restore_snapshot(snapshot, restored, pin)
+        recovered = ExecutionAuthority(SQLiteStore(restored / "state.sqlite3"), clock=self.clock)
+        recovered.evidence_completion = replace(gate, cas=ContentAddressedEvidenceStore(restored / "cas"))
+        self.assertTrue(recovered.replay_verification(task.unique_key))
+        (snapshot / "objects" / log.digest).write_bytes(b"corrupted")
+        with self.assertRaises(DatabaseIntegrityError):
+            restore_snapshot(snapshot, self.base / "bad-restore", pin)
+        self.assertFalse((self.base / "bad-restore").exists())
         (self.base / "cas" / log.relative_path).unlink()
         self.assertFalse(self.auth.replay_verification(task.unique_key))
 

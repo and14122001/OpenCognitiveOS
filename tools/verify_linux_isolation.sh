@@ -13,6 +13,7 @@ mkdir -m 0777 "$work/workspace"
 touch "$work/host-only"
 export OCOS_HOST_CANARY=host-only
 cat >"$work/probe.py" <<'PY'
+import hashlib
 import os
 import socket
 import sys
@@ -25,6 +26,9 @@ assert os.getuid() != 0
 assert int(next(line.split()[1] for line in Path("/proc/self/status").read_text().splitlines()
                 if line.startswith("CapEff:")), 16) == 0
 assert {name for _, name in socket.if_nameindex()} <= {"lo"}
+if len(sys.argv) == 3 and sys.argv[2]:
+    assert hashlib.sha256(Path("/candidate.py").read_bytes()).hexdigest() == sys.argv[2]
+    print("verified candidate blob", sys.argv[2])
 Path("/work/output").write_text("verified")
 print("bubblewrap: workspace write, host path hidden, private network, environment and capabilities verified")
 PY
@@ -42,10 +46,14 @@ sudo -n systemd-run --expand-environment=no --quiet --unit="$unit" --wait --coll
         for path in /bin /lib /lib64; do
             if test -e "$path"; then args+=(--ro-bind "$path" "$path"); fi
         done
+        if [[ -n "$2" ]]; then
+            exec 8<"$2"
+            args+=(--ro-bind-data 8 /candidate.py)
+        fi
         exec bwrap --unshare-all --die-with-parent --new-session --clearenv \
             --uid 65534 --gid 65534 --cap-drop ALL "${args[@]}" \
             --proc /proc --dev /dev --tmpfs /tmp --bind "$1/workspace" /work \
             --ro-bind "$1/probe.py" /probe.py --chdir /work \
-            /usr/bin/python3 -I /probe.py "$1/host-only"
-    ' bash "$work"
+            /usr/bin/python3 -I /probe.py "$1/host-only" "$3"
+    ' bash "$work" "${1:-}" "${2:-}"
 test "$(cat "$work/workspace/output")" = verified

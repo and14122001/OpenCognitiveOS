@@ -11,3 +11,12 @@
 | S55–S60、S70–S72 | SQLite 還原前驗證，無效來源保留目標 | 跨設備全量復原、配對基準、升級回滾及七天耐久待驗收。 |
 
 本機回歸命令為 `PYTHONPATH=src PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v`。
+
+| 新增元件 | 可重跑證據 | 驗收邊界 |
+|---|---|---|
+| 本地訊息及路由 | test_task_messages.py | SQLite 持久化、兄弟任務範圍、epoch、順序、撤銷、TTL、每群組 64 筆上限。 |
+| 備份與復原 | test_sealed_completion_rolls_back_and_replays | SQLite 與 Manifest 引用的 CAS 物件依外部固定摘要還原。控制器金鑰由操作者另管。 |
+| 基準比較 | test_benchmark.py、compare-benchmark | 依預註冊 SHA、30 個以上任務、重複種子、同模型同預算比較。合成資料只驗證計算。 |
+| Hermes ACP | github.com/NousResearch/hermes-agent，MIT，8fc0374447313e276f6b9a2764bfc750190c966a | CI 獨立測試 initialize；無模型推理。 |
+| OpenCode ACP | github.com/anomalyco/opencode，MIT，f4e363c8295fa90a03dddc451882fffe8fbce357 | 固定 v1.19.6 Linux release SHA256，CI 獨立測試 initialize。 |
+| Pi RPC | github.com/earendil-works/pi，MIT，ef4a1cfcca62b77ad3558337ff3e1c7f6beeadfe | 固定 v1.6.1 Linux release SHA256，CI 獨立測試 get_state。 |
