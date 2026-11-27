@@ -18,14 +18,22 @@ def _file_hash(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _references(db):
+def _references(db, version):
     with closing(sqlite3.connect(db.resolve(strict=True).as_uri() + "?mode=ro", uri=True)) as conn:
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='evidence_manifests'").fetchone():
-            return []
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         refs = set()
-        for (raw,) in conn.execute("SELECT manifest_json FROM evidence_manifests"):
-            for digest in json.loads(raw)["artifact_hashes"].values():
-                refs.add(ContentAddressedEvidenceStore.validate_digest(digest))
+        if "evidence_manifests" in tables:
+            for (raw,) in conn.execute("SELECT manifest_json FROM evidence_manifests"):
+                for digest in json.loads(raw)["artifact_hashes"].values():
+                    refs.add(ContentAddressedEvidenceStore.validate_digest(digest))
+        if version == 2:
+            if "local_attachments" in tables:
+                refs.update(row[0] for row in conn.execute("SELECT digest FROM local_attachments"))
+            if "broker_seals" in tables:
+                refs.update(row[0] for row in conn.execute(
+                    "SELECT evidence_hash FROM effects JOIN broker_seals ON intent=intent_id"))
+            for digest in refs:
+                ContentAddressedEvidenceStore.validate_digest(digest)
         return sorted(refs)
 
 
@@ -51,12 +59,12 @@ def export_snapshot(store, cas, destination):
     with _publish(destination) as stage:
         db = store.backup_to(stage / "state.sqlite3")
         SQLiteStore(db).integrity_check()
-        refs = _references(db)
+        refs = _references(db, 2)
         objects = stage / "objects"
         objects.mkdir()
         for digest in refs:
             (objects / digest).write_bytes(cas.read_bytes(digest))
-        manifest = {"version": 1, "database_sha256": _file_hash(db), "objects": refs}
+        manifest = {"version": 2, "database_sha256": _file_hash(db), "objects": refs}
         manifest_bytes = json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode()
         (stage / "manifest.json").write_bytes(manifest_bytes)
         return hashlib.sha256(manifest_bytes).hexdigest()
@@ -68,13 +76,13 @@ def restore_snapshot(source, destination, manifest_sha256):
     if hashlib.sha256(raw).hexdigest() != manifest_sha256:
         raise DatabaseIntegrityError("Snapshot manifest does not match trusted digest.")
     manifest = json.loads(raw)
-    if manifest.get("version") != 1:
+    if type(manifest.get("version")) is not int or manifest["version"] not in (1, 2):
         raise DatabaseIntegrityError("Unsupported snapshot.")
     with _publish(destination) as stage:
         # Pin the database bytes before validation so a changing source cannot substitute data.
         db = stage / "state.sqlite3"
         shutil.copyfile(root / "state.sqlite3", db)
-        if _file_hash(db) != manifest["database_sha256"] or _references(db) != manifest["objects"]:
+        if _file_hash(db) != manifest["database_sha256"] or _references(db, manifest["version"]) != manifest["objects"]:
             raise DatabaseIntegrityError("Database digest or evidence inventory mismatch.")
         SQLiteStore(db).integrity_check()
         cas = ContentAddressedEvidenceStore(stage / "cas")

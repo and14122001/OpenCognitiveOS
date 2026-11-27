@@ -28,6 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit-consistency", help="Audit cross-table DB consistency for a task.")
     p_audit.add_argument("--unique-key", required=True)
 
+    media = sub.add_parser("attach-local", help="Attach bounded local text, PCM audio or RGB bitmap context.")
+    media.add_argument("--source", required=True)
+    media.add_argument("--media-type", required=True)
     register = sub.add_parser("register-acceptance", help="Sign an operator-owned acceptance specification.")
     register.add_argument("--spec", required=True, help="Canonical path to an operator-owned mode-0600 JSON file.")
     stage = sub.add_parser("stage-candidates", help="Stage signed child outputs for independent review.")
@@ -44,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, typ in (("worker", str), ("execution", str), ("epoch", int)):
         for command in (verify_file, approved):
             command.add_argument("--" + name, type=typ, required=True)
-    for command in (register, stage, replay, complete, verify_file, approved):
+    for command in (media, register, stage, replay, complete, verify_file, approved):
         command.add_argument("--config", required=True, help="Canonical path to operator-owned mode-0600 configuration.")
         command.add_argument("--unique-key", required=True)
     complete.add_argument("--worker", required=True)
@@ -144,9 +147,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     store.migrate()
     authority = ExecutionAuthority(store, clock=clock)
 
-    if args.command in ("register-acceptance", "stage-candidates", "complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
+    if args.command in ("attach-local", "register-acceptance", "stage-candidates", "complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
         from opencognitiveos.verification.bootstrap import configure_evidence
         configure_evidence(authority, args.config)
+        if args.command == "attach-local":
+            from opencognitiveos.contracts.media import attach
+            from opencognitiveos.verification.bootstrap import _private_read
+            identity = attach(authority, args.unique_key, args.media_type, _private_read(args.source),
+                              capability=authority._controller_capability)
+            print(json.dumps({"attachment": identity}))
+            return 0
         if args.command == "register-acceptance":
             from opencognitiveos.errors import PolicyDeniedError
             from opencognitiveos.verification.acceptance import AcceptanceSpec, AcceptanceSpecRegistry

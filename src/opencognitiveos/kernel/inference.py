@@ -96,6 +96,18 @@ class InferenceCoordinator:
                             policy_hash=allocation["policy_hash"], model_id=allocation["model"],
                             tokenizer_version=allocation["tokenizer"], budget_reservation_id=rid,
                             max_tokens=max_tokens, data_class=spec.data_class.value)
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_attachments'").fetchone():
+                media = []
+                for item in conn.execute("SELECT * FROM local_attachments WHERE task=? ORDER BY id", (task,)):
+                    envelope = json.loads(item["envelope"])
+                    gate = self.auth.evidence_completion
+                    if (gate is None or canonical_json_hash(envelope) != item["id"]
+                            or envelope["task_hash"] != spec.content_hash() or envelope["task"] != task
+                            or envelope["sha256"] != item["digest"] or not gate.cas.verify_digest(item["digest"])):
+                        raise PolicyDeniedError("Local input context failed verification.")
+                    media.append(item["id"])
+                if media:
+                    snapshot["local_attachments"] = media
             if pin is not None:
                 snapshot["release_generation"], snapshot["config_hash"] = tuple(pin)
             conn.execute("INSERT INTO inference_calls VALUES (?,?,?,?,?,NULL,?,?,'ACTIVE')",

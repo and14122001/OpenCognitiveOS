@@ -118,6 +118,7 @@ test_task_spec_sha_mismatch (test_m2_worktree.TestM2WorktreeS21S22Round2.test_ta
 test_unknown_or_unregistered_directory_preserved_never_rmtree (test_m2_worktree.TestM2WorktreeS21S22Round2.test_unknown_or_unregistered_directory_preserved_never_rmtree)
 Fault Injection #6: Unknown / unregistered directories are preserved; never rmtree or prune. ... ok
 test_workspace_dispatch_fences_stale_worker (test_m2_worktree.TestM2WorktreeS21S22Round2.test_workspace_dispatch_fences_stale_worker) ... ok
+test_private_inputs_frozen_and_restored (test_media.MediaInputs.test_private_inputs_frozen_and_restored) ... ok
 test_loopback_request_and_usage (test_mlx_http.MLXProtocolTests.test_loopback_request_and_usage) ... ok
 test_restart_dispatches_pending_outbox_and_deduplicates_redelivery (test_outbox_and_restart.TestOutboxAndRestart.test_restart_dispatches_pending_outbox_and_deduplicates_redelivery) ... ok
 test_transaction_interruption_rolls_back_state_events_and_outbox (test_outbox_and_restart.TestOutboxAndRestart.test_transaction_interruption_rolls_back_state_events_and_outbox) ... ok
@@ -143,8 +144,8 @@ test_unique_key_idempotent_and_conflict_rejection (test_storage_and_idempotency.
 test_scoped_delivery_restart_and_revocation (test_task_messages.RoutingTests.test_scoped_delivery_restart_and_revocation) ... ok
 
 ----------------------------------------------------------------------
-Ran 129 tests in 9.075s
+Ran 130 tests in 12.281s
 
 OK (skipped=5)
-{"spec_sha256": "3fbcfb654f40b8b0238f2bc68965bf0ecbe2bbdbc1aa1c590e0461f0e9d5f014"}
+{"spec_sha256": "a5bf1a1a0fc03ee6a5ebbed9511ddc051ce1dd4999b778c3717a488e0cf2c597"}
 {"valid": true}
