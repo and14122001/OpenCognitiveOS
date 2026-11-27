@@ -1,0 +1,58 @@
+name: M1 acceptance
+on:
+  pull_request:
+  push:
+    branches: [feat/m0-m1-core]
+permissions:
+  contents: read
+concurrency:
+  group: acceptance-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+        python: ['3.11', '3.12', '3.13', '3.14', '3.15-dev']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PYTHONWARNINGS: error::ResourceWarning
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - name: Build dependencies
+        run: python -m pip install setuptools wheel packaging
+      - name: Regression and fault injection
+        env:
+          PYTHONPATH: src
+        run: |
+          set -o pipefail
+          python --version
+          git rev-parse HEAD
+          python -m unittest discover -s tests -v 2>&1 | tee acceptance.log
+      - name: Offline wheel and CLI
+        run: |
+          set -o pipefail
+          python -m pip wheel --no-build-isolation --no-deps --no-index -w dist . 2>&1 | tee wheel.log
+          python -m pip install --no-index --no-deps --force-reinstall dist/*.whl
+          python -I -m opencognitiveos --version
+          python -I -c "import sysconfig, pathlib, subprocess, os, importlib.metadata as m, opencognitiveos as p; root=pathlib.Path(sysconfig.get_path('purelib')).resolve(); assert pathlib.Path(p.__file__).resolve().is_relative_to(root), p.__file__; assert m.version('opencognitiveos') == '0.1.6.dev1'; exe=pathlib.Path(sysconfig.get_path('scripts')) / ('opencognitiveos.exe' if os.name == 'nt' else 'opencognitiveos'); print(p.__file__, exe, flush=True); subprocess.run([str(exe), '--version'], check=True)"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acceptance-${{ matrix.os }}-${{ matrix.python }}
+          path: |
+            acceptance.log
+            wheel.log
+          retention-days: 7
