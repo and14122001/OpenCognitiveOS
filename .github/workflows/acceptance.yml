@@ -140,3 +140,35 @@ jobs:
           PYTHONPATH: src
           HF_HUB_OFFLINE: '1'
         run: python tools/probe_mlx_server.py
+
+  omlx-hardware-probe:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'mlx==0.32.5'
+      - name: Record actual Metal availability on this standard runner
+        id: metal
+        run: |
+          python - <<'PY'
+          import mlx.core as mx, os
+          available = mx.metal.is_available()
+          print("Metal available:", available)
+          if not available:
+              print("::notice::oMLX native inference acceptance pending: this runner has no Metal device.")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print("available=" + str(available).lower(), file=f)
+          PY
+      - name: Install pinned upstream and exercise its local HTTP service
+        if: steps.metal.outputs.available == 'true'
+        env:
+          PYTHONPATH: src
+          HF_HUB_OFFLINE: '1'
+        run: |
+          python -m pip install 'omlx @ git+https://github.com/jundot/omlx@bc55984ab090682c2ea90876f5e64afe5cfd67a4'
+          python tools/probe_mlx_server.py --omlx

@@ -26,8 +26,8 @@ from opencognitiveos.storage.sqlite_store import SQLiteStore
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp).resolve()
-    model_dir = root / "model"
-    model_dir.mkdir()
+    model_dir = root / "models" / "model"
+    model_dir.mkdir(parents=True)
     mx.set_default_device(mx.cpu)
     mx.random.seed(41)
     args = ModelArgs(model_type="llama", hidden_size=32, num_hidden_layers=1, intermediate_size=64,
@@ -48,17 +48,31 @@ with tempfile.TemporaryDirectory() as tmp:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    proc = subprocess.Popen([sys.executable, "-c",
+    argv = [sys.executable, "-c",
         "import mlx.core as mx; mx.set_default_device(mx.cpu); from mlx_lm.server import main; main()",
-        "--model", str(model_dir), "--host", "127.0.0.1", "--port", str(port)],
+        "--model", str(model_dir), "--host", "127.0.0.1", "--port", str(port)]
+    model_id = str(model_dir)
+    if "--omlx" in sys.argv:
+        argv = [sys.executable, "-c", "from omlx.cli import main; main()", "serve", "--model-dir",
+                str(model_dir.parent), "--host", "127.0.0.1", "--port", str(port), "--base-path",
+                str(root / "omlx"), "--headless"]
+        model_id = model_dir.name
+    proc = subprocess.Popen(argv,
         env={**os.environ, "HF_HUB_OFFLINE":"1", "HF_HUB_CACHE":str(cache)})
     try:
-        server = LocalModelServer("127.0.0.1", port)
+        def count_prompt(model, revision, prompt):
+            if model != model_id or revision != "fixture-v1":
+                raise ValueError("Unknown model or tokenizer revision")
+            template = tokenizer.apply_chat_template([{"role": "user", "content": prompt}],
+                            tokenize=False, add_generation_prompt=True)
+            return len(tokenizer.encode(template, add_special_tokens=False))
+
+        server = LocalModelServer("127.0.0.1", port, count_prompt_tokens=count_prompt)
         for _ in range(60):
             if proc.poll() is not None:
                 raise RuntimeError("MLX server exited during startup")
             try:
-                if str(model_dir) in server.models():
+                if model_id in server.models():
                     break
             except OSError:
                 pass
@@ -72,7 +86,7 @@ with tempfile.TemporaryDirectory() as tmp:
         rec, _ = auth.submit_task(task)
         control = object()
         coordinator = InferenceCoordinator(auth, controller_capability=control)
-        coordinator.allocate(task.unique_key, str(model_dir), "fixture-v1", "fixture-policy", 32, capability=control)
+        coordinator.allocate(task.unique_key, model_id, "fixture-v1", "fixture-policy", 32, capability=control)
         for status in (TaskStatus.PLANNED, TaskStatus.READY):
             rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision, actor_role="controller", controller_capability=auth._controller_capability)
         lease = auth.acquire_lease(task.unique_key, "local")

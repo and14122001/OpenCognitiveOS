@@ -516,6 +516,11 @@ class TestM2S26S28S29S30Security(unittest.TestCase):
             path = (self.base / "config.json").resolve()
             path.write_text(json.dumps(config), encoding="utf-8")
             path.chmod(0o600)
+            spec_file = (self.base / "approved.json").resolve()
+            spec_file.write_text(spec.to_canonical_json(), encoding="utf-8")
+            spec_file.chmod(0o600)
+            self.assertEqual(main(["--db", str(self.db_path), "register-acceptance", "--unique-key", task.unique_key,
+                                   "--config", str(path), "--spec", str(spec_file)]), 0)
             self.assertEqual(main(["--db", str(self.db_path), "replay-evidence", "--unique-key", task.unique_key,
                                    "--config", str(path)]), 0)
         from opencognitiveos.storage.evidence_backup import export_snapshot, restore_snapshot

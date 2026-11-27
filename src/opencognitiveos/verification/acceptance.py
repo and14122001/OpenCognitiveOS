@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from opencognitiveos.verification.seals import seal
+from opencognitiveos.verification.seals import spec_seal
 from opencognitiveos.contracts.models import (
     Clock,
     SystemClock,
@@ -147,7 +147,8 @@ class AcceptanceSpecRegistry:
             raise PolicyDeniedError(f"Actor role '{actor_role}' cannot register or modify AcceptanceSpec.")
 
         if (
-            spec.project_id != task_spec.project_id
+            spec.schema_version != ACCEPTANCE_SPEC_SCHEMA_VERSION
+            or spec.project_id != task_spec.project_id
             or spec.repo_id != task_spec.repo_id
             or spec.task_unique_key != task_spec.unique_key
             or spec.base_sha != task_spec.base_sha
@@ -178,6 +179,11 @@ class AcceptanceSpecRegistry:
             ).fetchone()
             if existing is not None:
                 if existing["spec_hash"] == spec_hash:
+                    if self._signing_key is not None:
+                        import hmac
+                        tag = conn.execute("SELECT tag FROM acceptance_seals WHERE digest=?", (spec_hash,)).fetchone()
+                        if not tag or not hmac.compare_digest(tag[0], spec_seal(self._signing_key, spec_hash, persisted)):
+                            raise VerificationFailedError("Existing specification lacks a matching task seal.")
                     return spec_hash
                 if task_row["status"] in _FROZEN_STATUSES:
                     raise PolicyDeniedError(
@@ -215,7 +221,7 @@ class AcceptanceSpecRegistry:
                 ),
             )
             if self._signing_key is not None:
-                conn.execute("INSERT INTO acceptance_seals VALUES (?,?)", (spec_hash, seal(self._signing_key, "spec", spec_hash)))
+                conn.execute("INSERT INTO acceptance_seals VALUES (?,?)", (spec_hash, spec_seal(self._signing_key, spec_hash, persisted)))
         return spec_hash
 
     def load_and_verify_spec(

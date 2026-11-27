@@ -10,7 +10,7 @@ from opencognitiveos.execution.worktree import WorkspaceIdentity, WorkspaceManag
 from opencognitiveos.verification.acceptance import AcceptanceSpec, _parse_utc
 from opencognitiveos.verification.evidence_store import ContentAddressedEvidenceStore
 from opencognitiveos.verification.manifest import EvidenceManifest, capture_trusted_git_state
-from opencognitiveos.verification.seals import seal
+from opencognitiveos.verification.seals import seal, spec_seal
 
 
 def require(condition, reason):
@@ -39,7 +39,8 @@ class EvidenceCompletion:
                 ("SELECT tag FROM acceptance_seals WHERE digest=?", "spec", shash, self.controller_key),
                 ("SELECT tag FROM manifest_seals WHERE digest=?", "manifest", mhash, self.verifier_key)):
             tag = conn.execute(query, (digest,)).fetchone()
-            require(tag and hmac.compare_digest(tag[0], seal(key, kind, digest)), "Untrusted evidence seal.")
+            expected_tag = spec_seal(key, digest, task) if kind == "spec" else seal(key, kind, digest)
+            require(tag and hmac.compare_digest(tag[0], expected_tag), "Untrusted evidence seal.")
         require(manifest.evidence_id == evidence_id and mhash == row["manifest_hash"]
                 and manifest.acceptance_hash == spec_row["spec_hash"] == shash
                 and manifest.task_unique_key == spec.task_unique_key == task.unique_key

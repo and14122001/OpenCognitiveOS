@@ -14,7 +14,7 @@ from opencognitiveos.verification.evidence_store import EvidenceKind
 from opencognitiveos.verification.manifest import (
     EvidenceManifestRegistry, ExecutionEnvironmentRecord, capture_trusted_git_state,
 )
-from opencognitiveos.verification.seals import seal
+from opencognitiveos.verification.seals import spec_seal
 
 
 def verify_file(authority, *, task_key, workspace_id, worker_id, execution_id, epoch):
@@ -32,7 +32,7 @@ def verify_file(authority, *, task_key, workspace_id, worker_id, execution_id, e
     spec, digest = registry.load_and_verify_spec(task_spec=task, expected_policy_hash=gate.policy_hash)
     with authority.store.open_connection() as conn:
         tag = conn.execute("SELECT tag FROM acceptance_seals WHERE digest=?", (digest,)).fetchone()
-    if not tag or not hmac.compare_digest(tag[0], seal(gate.controller_key, "spec", digest)):
+    if not tag or not hmac.compare_digest(tag[0], spec_seal(gate.controller_key, digest, task)):
         raise VerificationFailedError("Untrusted acceptance specification.")
     command = spec.criteria.get("command", "")
     if (set(spec.criteria) not in ({"command", "min_pass"}, {"command", "min_pass", "worker_script"}) or type(spec.criteria["min_pass"]) is not int

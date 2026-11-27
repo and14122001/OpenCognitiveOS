@@ -99,9 +99,6 @@ class NativeWorker(unittest.TestCase):
         result = self.run_candidate("""
 import os,socket
 from pathlib import Path
-from dataclasses import replace
-from opencognitiveos.contracts.models import Budget
-from opencognitiveos.errors import PolicyDeniedError
 assert os.getuid()!=0 and not Path('/etc/passwd').exists() and not Path('/sys/fs/cgroup').exists()
 assert {n for _,n in socket.if_nameindex()} <= {'lo'}
 assert 'GITHUB_TOKEN' not in os.environ

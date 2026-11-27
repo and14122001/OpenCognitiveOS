@@ -15,7 +15,7 @@ from opencognitiveos.contracts.models import EffectOutcome, EffectReceipt
 from opencognitiveos.errors import PolicyDeniedError, ReconciliationRequiredError
 from opencognitiveos.verification.acceptance import AcceptanceSpecRegistry
 from opencognitiveos.verification.evidence_store import EvidenceKind
-from opencognitiveos.verification.seals import seal
+from opencognitiveos.verification.seals import spec_seal
 
 
 def execute_python(runner, request):
@@ -35,7 +35,7 @@ def execute_python(runner, request):
         raise PolicyDeniedError("Script has no task-specific controller approval.")
     with runner.authority.store.open_connection() as conn:
         tag = conn.execute("SELECT tag FROM acceptance_seals WHERE digest=?", (spec_hash,)).fetchone()
-    if tag is None or not hmac.compare_digest(tag[0], seal(gate.controller_key, "spec", spec_hash)):
+    if tag is None or not hmac.compare_digest(tag[0], spec_seal(gate.controller_key, spec_hash, task)):
         raise PolicyDeniedError("Invalid script authorization.")
     # Read by immutable Git object, never open a mutable workspace path as root.
     from opencognitiveos.execution.path_guard import checked_path

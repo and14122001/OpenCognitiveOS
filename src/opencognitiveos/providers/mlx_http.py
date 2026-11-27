@@ -10,10 +10,11 @@ from opencognitiveos.errors import PolicyDeniedError
 
 
 class LocalModelServer:
-    def __init__(self, host, port, *, timeout=30):
+    def __init__(self, host, port, *, timeout=30, count_prompt_tokens=None):
         if not ipaddress.ip_address(host).is_loopback or type(port) is not int or not 0 < port < 65536:
             raise PolicyDeniedError("Local inference requires a numeric loopback endpoint.")
         self.host, self.port, self.timeout = host, port, timeout
+        self._count_prompt_tokens = count_prompt_tokens
 
     def _request(self, method, path, payload=None):
         body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode()
@@ -43,6 +44,14 @@ class LocalModelServer:
         rid, snapshot = coordinator.begin(task, worker_id=worker_id, execution_id=execution_id, epoch=epoch,
                                          request_id=request_id, max_tokens=input_token_limit + output_token_limit)
         model = snapshot["model_id"]
+        try:
+            bound = self._count_prompt_tokens(model, snapshot["tokenizer_version"], prompt) if self._count_prompt_tokens else None
+        except Exception:
+            coordinator.settle(rid, 0, capability=supervisor)
+            raise
+        if type(bound) is not int or not 0 < bound <= input_token_limit:
+            coordinator.settle(rid, 0, capability=supervisor)
+            raise PolicyDeniedError("Input exceeds its allocation or lacks a trusted tokenizer bound.")
         if model not in self.models():
             coordinator.settle(rid, 0, capability=supervisor)
             raise PolicyDeniedError("Allocated model missing from local service.")

@@ -768,7 +768,7 @@ class ExecutionAuthority:
             spec = self._spec_from_row(row)
 
             # R4 tasks must not fall back to the legacy M1 verifier.
-            # Until trusted evidence execution is integrated, fail closed.
+            # Only the explicitly offline mock contract may use the M1 verifier.
             registry_exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='acceptance_specs'"
             ).fetchone()
@@ -781,7 +781,11 @@ class ExecutionAuthority:
             registered = registry_exists and conn.execute(
                 "SELECT 1 FROM acceptance_specs WHERE task_unique_key=?", (unique_key,)
             ).fetchone()
-            governed = has_workspace or registered or spec.base_sha != "HEAD" or evidence_id is not None
+            mock_only = (spec.base_sha == "HEAD" and not spec.cloud_approved
+                         and spec.allowed_providers == ("mock-local",)
+                         and set(spec.allowed_tools) <= {"mock.echo", "mock.write_note"})
+            governed = (not mock_only or self.evidence_completion is not None or has_workspace
+                        or registered or evidence_id is not None)
             if governed and (not has_workspace or not registered or not evidence_id or self.evidence_completion is None):
                 raise VerificationFailedError("Governed completion requires a trusted manifest and workspace; legacy completion denied.")
 

@@ -28,6 +28,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit-consistency", help="Audit cross-table DB consistency for a task.")
     p_audit.add_argument("--unique-key", required=True)
 
+    register = sub.add_parser("register-acceptance", help="Sign an operator-owned acceptance specification.")
+    register.add_argument("--spec", required=True, help="Canonical path to an operator-owned mode-0600 JSON file.")
     stage = sub.add_parser("stage-candidates", help="Stage signed child outputs for independent review.")
     stage.add_argument("--base-sha", required=True)
     stage.add_argument("--candidate", nargs=2, action="append", metavar=("CHILD", "PATH"), required=True)
@@ -42,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, typ in (("worker", str), ("execution", str), ("epoch", int)):
         for command in (verify_file, approved):
             command.add_argument("--" + name, type=typ, required=True)
-    for command in (stage, replay, complete, verify_file, approved):
+    for command in (register, stage, replay, complete, verify_file, approved):
         command.add_argument("--config", required=True, help="Canonical path to operator-owned mode-0600 configuration.")
         command.add_argument("--unique-key", required=True)
     complete.add_argument("--worker", required=True)
@@ -142,9 +144,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     store.migrate()
     authority = ExecutionAuthority(store, clock=clock)
 
-    if args.command in ("stage-candidates", "complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
+    if args.command in ("register-acceptance", "stage-candidates", "complete-evidence", "replay-evidence", "verify-file", "run-approved-python"):
         from opencognitiveos.verification.bootstrap import configure_evidence
         configure_evidence(authority, args.config)
+        if args.command == "register-acceptance":
+            from opencognitiveos.errors import PolicyDeniedError
+            from opencognitiveos.verification.acceptance import AcceptanceSpec, AcceptanceSpecRegistry
+            from opencognitiveos.verification.bootstrap import _private_read
+            gate = authority.evidence_completion
+            source = Path(args.spec)
+            if any(source.is_relative_to(root) for root in (gate.manager.repo_path, gate.manager.workspaces_root)):
+                raise PolicyDeniedError("Acceptance input must be outside worker-controlled roots.")
+            approved_spec = AcceptanceSpec.from_dict(json.loads(_private_read(source)))
+            if approved_spec.policy_hash != gate.policy_hash:
+                raise PolicyDeniedError("Acceptance policy differs from the configured policy.")
+            cap = authority._controller_capability
+            registry = AcceptanceSpecRegistry(authority, controller_capability=cap, signing_key=gate.controller_key)
+            digest = registry.register_spec(approved_spec, task_spec=authority.get_task(args.unique_key).spec, capability=cap)
+            print(json.dumps({"spec_sha256": digest}))
+            return 0
         if args.command == "stage-candidates":
             from opencognitiveos.kernel.candidates import stage_candidates
             digest, bundle = stage_candidates(authority, args.unique_key, args.base_sha, args.candidate,

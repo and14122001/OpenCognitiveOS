@@ -31,14 +31,18 @@ class MLXProtocolTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever)
             thread.start()
             try:
-                client = LocalModelServer(*server.server_address)
+                client = LocalModelServer(*server.server_address, count_prompt_tokens=lambda model, tokenizer, prompt: 3)
                 supervisor = object()
                 coordinator = Mock()
-                coordinator.begin.return_value = ("id", {"model_id": "fixture"})
+                coordinator.begin.return_value = ("id", {"model_id": "fixture", "tokenizer_version": "fixture-v1"})
                 text = client.complete(coordinator, "task", supervisor=supervisor, worker_id="w", execution_id="e",
                         epoch=1, request_id="1", prompt="test", input_token_limit=5, output_token_limit=2)
                 self.assertEqual(text, "ok")
                 coordinator.settle.assert_called_once_with("id", 4, capability=supervisor)
+                with self.assertRaises(PolicyDeniedError):
+                    client.complete(coordinator, "task", supervisor=supervisor, worker_id="w", execution_id="e",
+                            epoch=1, request_id="2", prompt="test", input_token_limit=2, output_token_limit=2)
+                coordinator.settle.assert_called_with("id", 0, capability=supervisor)
             finally:
                 server.shutdown()
                 thread.join()
