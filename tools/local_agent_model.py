@@ -9,10 +9,11 @@ from urllib.request import urlopen
 
 
 def start():
-    proc = subprocess.Popen(["/model-runtime/llama-server", "-m", "/model-fixture.gguf",
+    with Path("/tmp/fixture-model.log").open("wb") as log:
+        proc = subprocess.Popen(["/model-runtime/llama-server", "-m", "/model-fixture.gguf",
         "--alias", "ocos-fixture", "--host", "127.0.0.1", "--port", "18080", "-t", "2",
         "-c", "8192", "-np", "1", "--metrics", "-n", "48", "--no-webui"], stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=log, stderr=subprocess.STDOUT)
     try:
         for _ in range(80):
             if proc.poll() is not None:
@@ -68,3 +69,16 @@ def generated_tokens():
     if not match:
         raise ValueError("No local model generation metric")
     return int(float(match[1]))
+
+def print_fixture_diagnostics():
+    # This namespace contains a new synthetic home, a public model and no credentials.
+    paths = [Path("/tmp/fixture-model.log"), *Path("/tmp/hermes-home/logs").glob("*.log")]
+    for path in paths:
+        if not path.is_file():
+            continue
+        with path.open("rb") as stream:
+            stream.seek(max(0, path.stat().st_size - 32768))
+            lines = stream.read(32768).decode("utf-8", "replace").splitlines()
+        selected = [line for line in lines if re.search(r"error|exception|fail|denied|400|invalid", line, re.I)]
+        for line in selected[-8:]:
+            print("Isolated fixture log", path.name, line[:320], flush=True)

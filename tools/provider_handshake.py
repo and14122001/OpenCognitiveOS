@@ -35,6 +35,8 @@ async def main():
             raise RuntimeError("No generation on the isolated local server")
         print(adapter, "verified local model generated tokens:", generated, flush=True)
     except Exception as exc:
+        from local_agent_model import print_fixture_diagnostics
+        print_fixture_diagnostics()
         remote = getattr(exc, "remote_error", None)
         if remote is not None:
             print("Public fixture ACP diagnostic:", str(remote)[:1200], flush=True)

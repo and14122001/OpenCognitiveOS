@@ -4,7 +4,7 @@
 |---|---|
 | 既有 PR #4 的 7ab15cb | 63/63。[日誌](pr4.log) |
 | 重建 R3/R4 與修正 | 118 項，113 通過、5 跳過。從 d929527 依序 git apply --check 並套用 consolidated（含 R3）、R4、CAS、F25、F20 partial、F21 registration。[日誌](recovery.log)／[來源摘要](sources.sha256) |
-| Manifest | ZIP、consolidated、recovery log、R4 patch、原始測試日誌雜湊相符。兩份 Google 文件目前匯出的位元組與原 Markdown 摘要不同，原檔待補。 |
+| Manifest | R4 Manifest 指定的 3 個基線摘要與 4 個交付物摘要全部相符。兩份 Google 文件以 text/markdown 匯出，還原 Google 加入的反斜線、行尾空白及末端 LF；驗收報告另移除三級標題與項目間的空行。重建位元組與封存 SHA256 完全相符。[驗收報告](M2_R4_ACCEPTANCE_REPORT.md)／[安全審查](M2_R4_SECURITY_REVIEW.md)。 |
 | 可攜回歸 | 130 項，125 通過、5 跳過。這五項針對已隔離的舊 unshare 後端。正式 broker 另設原生測試。[逐項日誌](final-regression.log) |
 | Ubuntu 正式入口 | bubblewrap、cgroup v2、錯誤輸出證據、子程序逾時、獨立驗收、原子 SUCCEEDED 及重播。[Run 45984405670 / Linux job](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456206728) |
 | 三個上游程序 | Hermes 8fc03744 與 OpenCode v1.19.6 的 ACP session/new、Pi v1.6.1 的 RPC get_state。固定來源，在無網路及無憑證 namespace 內執行。[Hermes](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456207003)／[OpenCode](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456206991)／[Pi](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45984405670/job/140456207029) |
