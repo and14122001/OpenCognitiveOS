@@ -28,3 +28,23 @@ class TestM2PathGuard(unittest.TestCase):
             os.link(root / "original", root / "alias")
             with self.assertRaises(ValueError):
                 checked_path(root, "alias")
+
+    def test_reserved_variants(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("nul.txt", "COM¹.txt", "LPT²", "COM³", "CONIN$", "CONOUT$", "CON .txt", "bad?name", "bad*name", "bad<name", "bad>name", "bad|name", 'bad"name', "bad\nname", "a "):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    checked_path(Path(tmp), name)
+
+    def test_reparse_attribute(self):
+        import stat
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = Path.lstat
+            def fake(path, *args, **kwargs):
+                if path.name == "junction":
+                    return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+                return original(path, *args, **kwargs)
+            with patch.object(Path, "lstat", fake), self.assertRaises(ValueError):
+                checked_path(root, "junction/file")

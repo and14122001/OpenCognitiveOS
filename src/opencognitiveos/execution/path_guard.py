@@ -1,26 +1,36 @@
-"""M2 preliminary guard for trusted controller operations, not an OS sandbox."""
-from pathlib import Path, PureWindowsPath
+"""Trusted controller precheck only; not an OS sandbox."""
+from pathlib import Path
+import stat
+
+_RESERVED = frozenset({"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} |
+                      {prefix + digit for prefix in ("COM", "LPT") for digit in "123456789¹²³"})
+_FORBIDDEN = frozenset('<>:"/\\|?*')
+
+def _forbidden(part: str) -> bool:
+    return (part in ("", ".", "..") or part.casefold() == ".git"
+            or part.rstrip(" .") != part
+            or any(ord(c) < 32 or c in _FORBIDDEN for c in part)
+            or part.split(".", 1)[0].rstrip(" ").upper() in _RESERVED)
 
 def checked_path(root: Path, relative: str) -> Path:
-    """Reject traversal, links, special files and Git metadata.
-    Caller must prevent concurrent mutation; never authorize untrusted processes.
-    """
-    if not isinstance(relative, str) or not relative or "\\" in relative or "\x00" in relative:
-        raise ValueError("invalid relative path")
-    parts = relative.split("/")
-    if any(p in ("", ".", "..") or p.casefold() == ".git" or ":" in p or p.rstrip(" .") != p or PureWindowsPath(p).is_reserved() for p in parts):
+    """Caller must prevent concurrent mutation; never authorize untrusted processes."""
+    if not isinstance(relative, str) or any(_forbidden(p) for p in relative.split("/")):
         raise ValueError("forbidden component")
     root = root.resolve(strict=True)
     if not root.is_dir():
         raise ValueError("invalid root")
     current = root
-    for part in parts:
+    for part in relative.split("/"):
         current = current / part
-        if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
-            raise ValueError("link forbidden")
-        if current.exists() and not (current.is_dir() or current.is_file()):
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise ValueError("link or reparse point forbidden")
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
             raise ValueError("special file forbidden")
-        if current.is_file() and current.stat().st_nlink != 1:
+        if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
             raise ValueError("hardlink forbidden")
     resolved = current.resolve(strict=False)
     if not resolved.is_relative_to(root):
