@@ -55,3 +55,5 @@ flowchart TD
 ## 開發階段
 
 P0：最小 mock harness、任務契約、持久化與權限測試。P1：地端模型及 coding worker。P2：雲端 Provider 受控接入、額度與工具隔離。P3：世界模型、時序知識及遞迴。P4：獨立評估、動態拓撲與演進。每階段以等資源基線比較；未完成實測不可宣稱正式支援。
+
+[工程驗收矩陣](docs/ACCEPTANCE_MATRIX.md)記錄 Linux 原生隔離、固定版本代理與模型實測、跨平台回歸、跨主機還原及未完成項目。[CPU 實驗封存](docs/validation/ab/README.md)包含預註冊、實際資源用量及可重播的原始輸出。

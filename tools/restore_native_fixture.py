@@ -28,8 +28,9 @@ def main(source, digest):
         manager = WorkspaceManager(authority=auth, repo_path=Path.cwd(), workspaces_root=root / "workspaces")
         auth.evidence_completion = EvidenceCompletion(manager, ContentAddressedEvidenceStore(dest / "cas"),
             *public_fixture_keys(), canonical_json_hash({"net": "deny"}))
-        assert auth.get_task("r::t").status == TaskStatus.SUCCEEDED
-        assert auth.replay_verification("r::t")
+        if (auth.get_task("r::t").status != TaskStatus.SUCCEEDED or not auth.replay_verification("r::t")
+                or not auth.audit_database_consistency("r::t")["ok"]):
+            raise RuntimeError("Restored receipt or database consistency check failed.")
         print("Restored Linux SQLite/CAS and independently replayed native SUCCEEDED receipt:", digest)
 
 

@@ -19,3 +19,7 @@
 回歸命令為 `PYTHONPATH=src PYTHONWARNINGS=error::ResourceWarning python3 -m unittest discover -s tests -v`。CI 的 Linux 原生入口為 `bash tools/verify_linux_isolation.sh` 與 `PYTHONPATH=src python3 tools/test_native_worker.py -v`。舊 Run 45983216217 的 Linux timeout 案例發現 systemd 停止時可能回傳零。Run 45984405670 已驗證修正，逾時一律回傳 124。保留原失敗紀錄。
 
 完整邊界見[專案驗收矩陣](../../ACCEPTANCE_MATRIX.md)。控制器與 SQLite 寫入權限屬於信任邊界，worker 在獨立 OS 程序執行。CAS 先寫入不可變物件、SQLite 在單一交易提交可見證據引用、任務、收據與 outbox。斷電可留下未引用 CAS 物件。
+
+原生專用工作區已獨立驗證同機開機識別、工作區簽章、單一已結算 unit、成功收據重播及重新查詢核心狀態。變造 unit 時拒絕刪除，原工作區留存。通過後清理，仍可重播。[Run 45988995873 / Linux](https://github.com/and14122001/OpenCognitiveOS/actions/runs/45988995873/job/140471868132)
+
+tools/soak_restore.py 僅對公開合成 fixture 執行前景耐久測試。每次另起程序、還原至新目錄、檢查跨表一致性及重播。CI 觀察 8 秒，完整模式要求連續 604,800 秒，以 monotonic 經過時間與取樣間隔判定，尚無七天證據。未新增排程。

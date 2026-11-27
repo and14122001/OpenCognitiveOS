@@ -118,7 +118,7 @@ jobs:
         env:
           PYTHONPATH: src
           SNAPSHOT_SHA: ${{ needs.linux-isolation-primitives.outputs.snapshot }}
-        run: python tools/restore_native_fixture.py "$RUNNER_TEMP/source" "$SNAPSHOT_SHA"
+        run: python tools/soak_restore.py "$RUNNER_TEMP/source" "$SNAPSHOT_SHA" --seconds 8 --interval 2
 
   provider-handshake:
     runs-on: ubuntu-latest
