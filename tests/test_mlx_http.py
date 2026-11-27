@@ -1,3 +1,4 @@
+import hashlib
 import json
 import threading
 import unittest
@@ -38,7 +39,8 @@ class MLXProtocolTests(unittest.TestCase):
                 text = client.complete(coordinator, "task", supervisor=supervisor, worker_id="w", execution_id="e",
                         epoch=1, request_id="1", prompt="test", input_token_limit=5, output_token_limit=2)
                 self.assertEqual(text, "ok")
-                coordinator.settle.assert_called_once_with("id", 4, capability=supervisor)
+                trace = tuple(hashlib.sha256(v).hexdigest() for v in (b"test", b"ok"))
+                coordinator.settle.assert_called_once_with("id", 4, capability=supervisor, trace=trace)
                 with self.assertRaises(PolicyDeniedError):
                     client.complete(coordinator, "task", supervisor=supervisor, worker_id="w", execution_id="e",
                             epoch=1, request_id="2", prompt="test", input_token_limit=2, output_token_limit=2)

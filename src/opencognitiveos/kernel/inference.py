@@ -1,5 +1,6 @@
 """Single-controller inference slot, restart-safe handoff and conservative usage accounting."""
 import json
+import re
 from opencognitiveos.contracts.models import canonical_json_hash
 from opencognitiveos.errors import BudgetExceededError, PolicyDeniedError
 
@@ -18,6 +19,9 @@ class InferenceCoordinator:
                 reservation TEXT PRIMARY KEY, task TEXT NOT NULL REFERENCES inference_allocations(task),
                 execution_id TEXT NOT NULL, epoch INTEGER NOT NULL, tokens INTEGER NOT NULL,
                 used INTEGER, snapshot TEXT NOT NULL, snapshot_hash TEXT NOT NULL, state TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS inference_traces (
+                reservation TEXT PRIMARY KEY REFERENCES inference_calls(reservation),
+                input_sha256 TEXT NOT NULL, output_sha256 TEXT NOT NULL)""")
             conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS one_active_inference
                 ON inference_calls(state) WHERE state='ACTIVE'""")
 
@@ -119,7 +123,7 @@ class InferenceCoordinator:
                           canonical_json_hash(snapshot)))
             return rid, snapshot
 
-    def settle(self, reservation, actual_tokens, *, capability):
+    def settle(self, reservation, actual_tokens, *, capability, trace=None):
         """Only the transport supervisor confirms exit. Unknown usage consumes the reservation."""
         if capability is not self._control:
             raise PolicyDeniedError("Only the trusted supervisor can release the inference slot.")
@@ -130,4 +134,9 @@ class InferenceCoordinator:
             used = row["tokens"] if actual_tokens is None else actual_tokens
             if type(used) is not int or used < 0 or used > row["tokens"]:
                 raise BudgetExceededError("Unreconciled usage; retain occupied slot.")
+            if trace is not None:
+                if (not isinstance(trace, tuple) or len(trace) != 2 or actual_tokens is None
+                        or not all(isinstance(d, str) and re.fullmatch(r"[a-f0-9]{64}", d) for d in trace)):
+                    raise PolicyDeniedError("Confirmed usage and two content digests required.")
+                conn.execute("INSERT INTO inference_traces VALUES (?,?,?)", (reservation, *trace))
             conn.execute("UPDATE inference_calls SET used=?,state='CLOSED' WHERE reservation=?", (used, reservation))

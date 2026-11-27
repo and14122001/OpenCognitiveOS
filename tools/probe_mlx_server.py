@@ -1,5 +1,6 @@
 """Exercise local HTTP inference with the real MLX-LM server and small synthetic weights."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast
 
-from opencognitiveos.contracts.models import TaskSpec, TaskStatus
+from opencognitiveos.contracts.models import Budget, TaskSpec, TaskStatus
 from opencognitiveos.kernel.authority import ExecutionAuthority
 from opencognitiveos.kernel.inference import InferenceCoordinator
 from opencognitiveos.providers.mlx_http import LocalModelServer
@@ -86,7 +87,7 @@ with tempfile.TemporaryDirectory() as tmp:
         rec, _ = auth.submit_task(task)
         control = object()
         coordinator = InferenceCoordinator(auth, controller_capability=control)
-        coordinator.allocate(task.unique_key, model_id, "fixture-v1", "fixture-policy", 32, capability=control)
+        coordinator.allocate(task.unique_key, model_id, "fixture-v1", "fixture-policy", 64, capability=control)
         for status in (TaskStatus.PLANNED, TaskStatus.READY):
             rec = auth.transition_task(rec.unique_key, status, expected_revision=rec.revision, actor_role="controller", controller_capability=auth._controller_capability)
         lease = auth.acquire_lease(task.unique_key, "local")
@@ -98,6 +99,44 @@ with tempfile.TemporaryDirectory() as tmp:
             row = conn.execute("SELECT state,used FROM inference_calls").fetchone()
         assert row["state"] == "CLOSED" and 0 < row["used"] <= 18
         print("MLX HTTP completion; settled tokens", row["used"], "output characters", len(out))
+        from opencognitiveos.kernel.messages import TaskMessages
+        bus = TaskMessages(auth, controller_capability=control)
+        participants = []
+        for role in ("author", "reviewer"):
+            child = replace(task, task_id=role, parent_id=task.task_id, budget=Budget(max_steps=2, max_retries=0))
+            current, _ = auth.submit_task(child)
+            for status in (TaskStatus.PLANNED, TaskStatus.READY):
+                current = auth.transition_task(child.unique_key, status, expected_revision=current.revision,
+                                actor_role="controller", controller_capability=auth._controller_capability)
+            child_lease = auth.acquire_lease(child.unique_key, role)
+            child_fence = dict(worker_id=role, execution_id=child_lease.execution_id, epoch=child_lease.fencing_epoch)
+            auth.transition_task(child.unique_key, TaskStatus.RUNNING, expected_revision=current.revision, **child_fence)
+            participants.append((child.unique_key, child_fence))
+        (author, first), (reviewer, second) = participants
+        version = bus.replace_routes(task.unique_key, 0, [(author, reviewer)], capability=control)
+        proposal = server.complete(coordinator, author, supervisor=control, request_id="author",
+                        prompt="5 6", input_token_limit=12, output_token_limit=2, **first)
+        # Encode empty model text explicitly so even an empty proposal has an auditable rejection/review path.
+        envelope = json.dumps({"proposal":proposal}, separators=(",",":"))
+        mid = bus.publish(root=task.unique_key, version=version, sender=author, recipient=reviewer,
+                          kind="proposal", body=envelope, sequence=1, **first)
+        restarted = TaskMessages(ExecutionAuthority(store), controller_capability=control)
+        inbox = restarted.inbox(root=task.unique_key, recipient=reviewer, **second)
+        assert len(inbox) == 1 and inbox[0]["digest"] == mid
+        received = json.loads(inbox[0]["body"])["proposal"]
+        review_prompt = "7 " + received
+        reviewed = server.complete(coordinator, reviewer, supervisor=control, request_id="review",
+                        prompt=review_prompt, input_token_limit=16, output_token_limit=2, **second)
+        restarted.acknowledge(root=task.unique_key, recipient=reviewer, source_worker_task=author,
+                              source_execution=first["execution_id"], sequence=1, digest=mid, **second)
+        assert not restarted.inbox(root=task.unique_key, recipient=reviewer, **second)
+        with store.open_connection() as conn:
+            traces = conn.execute("""SELECT input_sha256,output_sha256 FROM inference_traces
+                      JOIN inference_calls USING(reservation) WHERE state='CLOSED'""").fetchall()
+            assert conn.execute("SELECT SUM(used) FROM inference_calls").fetchone()[0] <= 64
+        assert len(traces) == 3 and (hashlib.sha256(review_prompt.encode()).hexdigest(),
+                hashlib.sha256(reviewed.encode()).hexdigest()) in [tuple(row) for row in traces]
+        print("Two real model-backed sibling turns; message persisted, replayed, acknowledged; three usage traces.")
     finally:
         proc.terminate()
         try:

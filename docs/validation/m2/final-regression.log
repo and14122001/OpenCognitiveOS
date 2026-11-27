@@ -144,8 +144,8 @@ test_unique_key_idempotent_and_conflict_rejection (test_storage_and_idempotency.
 test_scoped_delivery_restart_and_revocation (test_task_messages.RoutingTests.test_scoped_delivery_restart_and_revocation) ... ok
 
 ----------------------------------------------------------------------
-Ran 130 tests in 9.689s
+Ran 130 tests in 10.853s
 
 OK (skipped=5)
-{"spec_sha256": "1fc09ab7f5496a317c7e12b38e3b0a80c5cee0ae9c3dbcf201eb8ea381761f6d"}
+{"spec_sha256": "e9b2fd887e7041cb6262dcd94928bd25285bb1410365ebed13526322d8f589f1"}
 {"valid": true}

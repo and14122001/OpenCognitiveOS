@@ -1,6 +1,7 @@
 """Controller-only loopback adapter for OpenAI-compatible MLX/oMLX servers."""
 from __future__ import annotations
 
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -69,5 +70,6 @@ class LocalModelServer:
         text = reply["choices"][0]["message"]["content"]
         if not isinstance(text, str):
             raise PolicyDeniedError("Malformed proposal.")
-        coordinator.settle(rid, used, capability=supervisor)
+        trace = (hashlib.sha256(prompt.encode()).hexdigest(), hashlib.sha256(text.encode()).hexdigest())
+        coordinator.settle(rid, used, capability=supervisor, trace=trace)
         return text
